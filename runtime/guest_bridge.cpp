@@ -87,9 +87,12 @@ public:
                  (unsigned long long)Args->Argument[0], (unsigned long long)Args->Argument[1]);
     auto it = by_id_->find(id);
     if (it == by_id_->end()) { std::fprintf(stderr, "[bridge] id %u not found\n", id); return 0; }
+    // SysV 函数 ABI 参数在 gregs（RDI/RSI/RDX/RCX/R8/R9）；Args->Argument 是 Linux
+    // syscall ABI 布局，不适用 veneer 函数调用，故从 gregs 读。
     const uint64_t int_args[6] = {
-        Args->Argument[0], Args->Argument[1], Args->Argument[2],
-        Args->Argument[3], Args->Argument[4], Args->Argument[5]};
+        gregs[FEXCore::X86State::REG_RDI], gregs[FEXCore::X86State::REG_RSI],
+        gregs[FEXCore::X86State::REG_RDX], gregs[FEXCore::X86State::REG_RCX],
+        gregs[FEXCore::X86State::REG_R8],  gregs[FEXCore::X86State::REG_R9]};
     uint64_t ret = it->second.fn(int_args, 6, nullptr);
     std::fprintf(stderr, "[bridge] host %s ret=%llu\n", it->second.name.c_str(), (unsigned long long)ret);
     gregs[FEXCore::X86State::REG_RAX] = ret;
