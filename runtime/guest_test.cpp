@@ -42,16 +42,41 @@ std::vector<uint8_t> BuildMulsd() {
   return c;
 }
 
-// 宿主调用：rdi=7, rsi=5, call veneer（host 算 7+5=12），结果在 rax
-std::vector<uint8_t> BuildHostCall(uint64_t veneer_addr) {
+// 追加 call rel32 到 target（code 将放在 code_addr）。返回后 rel32 已算好。
+void EmitCallRel32(std::vector<uint8_t>& c, uint64_t code_addr, uint64_t target) {
+  c.push_back(0xE8);
+  size_t rel_off = c.size();
+  c.insert(c.end(), {0, 0, 0, 0});
+  int32_t rel = static_cast<int32_t>(target - (code_addr + rel_off + 4));
+  std::memcpy(c.data() + rel_off, &rel, 4);
+}
+
+// 宿主调用：rdi=7, rsi=5, 直接 call veneer（host 算 7+5=12），结果在 rax
+std::vector<uint8_t> BuildHostCall(uint64_t veneer_addr, uint64_t code_addr) {
   std::vector<uint8_t> c;
   MovRaxImm64(c, 7);
   Emit(c, {0x48, 0x89, 0xC7});              // mov rdi, rax
   MovRaxImm64(c, 5);
   Emit(c, {0x48, 0x89, 0xC6});              // mov rsi, rax
-  MovRaxImm64(c, veneer_addr);
-  Emit(c, {0xFF, 0xD0});                    // call rax（veneer）
+  EmitCallRel32(c, code_addr, veneer_addr); // call veneer（直接调用）
   Emit(c, {0xF4});                          // hlt
+  return c;
+}
+
+// 自包含直接调用：call sub; hlt; sub: mov rax,42; ret（验证 call rel32）
+std::vector<uint8_t> BuildDirectCallRet(uint64_t code_addr) {
+  std::vector<uint8_t> c;
+  size_t call_off = c.size();
+  c.push_back(0xE8);
+  size_t rel_off = c.size();
+  c.insert(c.end(), {0, 0, 0, 0});
+  c.push_back(0xF4);                        // hlt
+  size_t sub = c.size();
+  MovRaxImm64(c, 42);
+  c.push_back(0xC3);                        // ret
+  int32_t rel = static_cast<int32_t>((code_addr + sub) - (code_addr + rel_off + 4));
+  std::memcpy(c.data() + rel_off, &rel, 4);
+  (void)call_off;
   return c;
 }
 
@@ -98,17 +123,11 @@ int main() {
                 (unsigned long long)got, (unsigned long long)c.want);
   }
 
-  // 隔离诊断：不含 syscall 的间接调用（stub: mov rax,42; ret），验证 call rax 机制
+  // 隔离诊断：自包含直接调用 call rel32（sub 返回 42），验证直接调用机制
   {
     ++total;
-    uint64_t stub_addr = base + 0x8000;
-    uint8_t stub[] = {0x48, 0xC7, 0xC0, 0x2A, 0x00, 0x00, 0x00, 0xC3};  // mov rax,42; ret
-    std::memcpy(reinterpret_cast<void*>(stub_addr), stub, sizeof(stub));
-    std::vector<uint8_t> c;
-    MovRaxImm64(c, stub_addr);
-    Emit(c, {0xFF, 0xD0});  // call rax
-    Emit(c, {0xF4});
     uint64_t code_addr = base + 0x1000 * total;
+    auto c = BuildDirectCallRet(code_addr);
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 42;
@@ -124,8 +143,8 @@ int main() {
         [](const uint64_t* args, unsigned, const double*) -> uint64_t {
           return args[0] + args[1];
         });
-    auto code = BuildHostCall(veneer);
     uint64_t code_addr = base + 0x1000 * total;
+    auto code = BuildHostCall(veneer, code_addr);
     std::memcpy(reinterpret_cast<void*>(code_addr), code.data(), code.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 12;
