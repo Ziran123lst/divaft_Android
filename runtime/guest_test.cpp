@@ -98,6 +98,25 @@ int main() {
                 (unsigned long long)got, (unsigned long long)c.want);
   }
 
+  // 隔离诊断：不含 syscall 的间接调用（stub: mov rax,42; ret），验证 call rax 机制
+  {
+    ++total;
+    uint64_t stub_addr = base + 0x8000;
+    uint8_t stub[] = {0x48, 0xC7, 0xC0, 0x2A, 0x00, 0x00, 0x00, 0xC3};  // mov rax,42; ret
+    std::memcpy(reinterpret_cast<void*>(stub_addr), stub, sizeof(stub));
+    std::vector<uint8_t> c;
+    MovRaxImm64(c, stub_addr);
+    Emit(c, {0xFF, 0xD0});  // call rax
+    Emit(c, {0xF4});
+    uint64_t code_addr = base + 0x1000 * total;
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 42;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x2a)\n",
+                "direct_call", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   // veneer 宿主调用：guest 调 host 函数（7+5），验证 guest↔host 桥接往返
   {
     ++total;
