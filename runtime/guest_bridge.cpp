@@ -177,7 +177,8 @@ uint64_t GuestBridge::DispatchSyscall(uint32_t veneer_id, const uint64_t* sysv_a
 uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned count) {
 #ifdef DIVAFT_WITH_FEX
   if (!impl_->initialized || !impl_->ctx) return 0;
-  const uint64_t stack_top = impl_->guest_base + (1 << 20);
+  // 栈顶放在区域顶部 veneer 下方 1MB（向下生长），避免落在 eboot 映像内。
+  const uint64_t stack_top = impl_->guest_base + impl_->guest_size - kVeneerSpace - (1 << 20);
   auto* thread = impl_->ctx->CreateThread(entry, stack_top);
   if (!thread) return 0;
   auto& state = thread->CurrentFrame->State;
