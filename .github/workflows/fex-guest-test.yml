@@ -38,9 +38,12 @@ jobs:
       - name: Build FEX + divaft guest_test
         run: bash scripts/configure-fex-android.sh
 
+      - name: Static-link guest_test (for qemu user-mode)
+        run: bash scripts/build-guest-static.sh
+
       - name: Run guest_test under qemu-aarch64
         run: |
-          BIN=build/fex-android/Bin/fexcore-guest-harness
+          BIN=build/fex-android/Bin/fexcore-guest-harness-static
           qemu-aarch64 "$BIN" | tee /tmp/guest-test.log
           if grep -q GUEST_EXEC_PASS /tmp/guest-test.log; then
             echo "GUEST_EXEC_PASS confirmed (qemu-aarch64)"
@@ -54,4 +57,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: divaft-guest-test
-          path: build/fex-android/Bin/fexcore-guest-harness
+          path: build/fex-android/Bin/fexcore-guest-harness-static
