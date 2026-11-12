@@ -28,7 +28,7 @@ cmake -S "$FEX_SRC" -B "$BUILD" -G Ninja \
   -DTUNE_CPU=cortex-a78 \
   -DBUILD_FEXCORE_ONLY=ON \
   -DFEXCORE_SMOKE_SOURCE="$ROOT/scripts/fex/smoke_stub.cpp" \
-  -DFEXCORE_GUEST_HARNESS_SOURCES="$ROOT/runtime/guest_bridge.cpp;$ROOT/runtime/diva_runtime.cpp;$ROOT/runtime/diva_boot.cpp" \
+  -DFEXCORE_GUEST_HARNESS_SOURCES="$ROOT/runtime/guest_bridge.cpp;$ROOT/runtime/diva_loader.cpp;$ROOT/runtime/hle_wire.cpp;$ROOT/runtime/diva_runtime.cpp;$ROOT/runtime/diva_boot.cpp" \
   -DFEXCORE_PROJECT_SOURCE_DIR="$ROOT/runtime/include" \
   -DBUILD_FEXCONFIG=OFF -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF \
   -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF -DENABLE_LTO=OFF \
