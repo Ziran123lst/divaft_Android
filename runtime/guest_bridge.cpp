@@ -20,6 +20,7 @@
 #include <Common/HostFeatures.h>
 #include <csignal>
 #include <csetjmp>
+#include <unistd.h>
 #endif
 
 namespace divaft {
@@ -27,7 +28,6 @@ namespace divaft {
 constexpr uint64_t kVeneerSpace = 16 * 1024 * 1024;
 constexpr size_t kVeneerSize = 16;
 
-// veneer x86-64 字节码：mov r10,rcx; mov eax,<id>; syscall; ret
 static void EmitVeneer(uint8_t* p, uint32_t id) {
   p[0] = 0x49; p[1] = 0x89; p[2] = 0xCA;
   p[3] = 0xB8;
@@ -38,7 +38,25 @@ static void EmitVeneer(uint8_t* p, uint32_t id) {
 
 #ifdef DIVAFT_WITH_FEX
 
-// 最小信号委托：安装宿主信号处理（guest 故障经 FEX 处理）。
+namespace {
+thread_local FEXCore::Core::InternalThreadState* t_active_thread = nullptr;
+thread_local sigjmp_buf t_exit_jmp;
+constexpr uint8_t kHlt = 0xF4;
+
+// guest 以 HLT 结束执行；故障信号里检测 HLT 并跳出 ExecuteThread。
+void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
+  auto* thread = t_active_thread;
+  if (thread) {
+    const uint64_t rip = thread->CurrentFrame->State.rip;
+    if (rip && reinterpret_cast<const uint8_t*>(rip)[0] == kHlt) {
+      siglongjmp(t_exit_jmp, 1);
+    }
+    siglongjmp(t_exit_jmp, 2);
+  }
+  _exit(128 + sig);
+}
+}  // namespace
+
 class GuestSignalDelegator final : public FEXCore::SignalDelegator {
 public:
   bool Install() {
@@ -53,10 +71,10 @@ public:
   }
 };
 
-// veneer syscall 分发：guest 经 veneer 陷入时按 id 调宿主函数。
 class VeneerSyscallHandler final : public FEXCore::HLE::SyscallHandler {
 public:
-  explicit VeneerSyscallHandler(std::unordered_map<uint32_t, Veneer>* by_id) : by_id_(by_id) {
+  VeneerSyscallHandler(std::unordered_map<uint32_t, Veneer>* by_id, uint64_t base, uint64_t size)
+      : by_id_(by_id), base_(base), size_(size) {
     OSABI = FEXCore::HLE::SyscallOSABI::OS_GENERIC;
   }
   uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* Frame,
@@ -73,14 +91,24 @@ public:
     gregs[FEXCore::X86State::REG_RAX] = ret;
     return ret;
   }
+  FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(
+      FEXCore::Core::InternalThreadState*, uint64_t) override {
+    return {base_, size_, false};
+  }
+  std::optional<FEXCore::ExecutableFileSectionInfo> LookupExecutableFileSection(
+      FEXCore::Core::InternalThreadState*, uint64_t) override {
+    return std::nullopt;
+  }
 private:
   std::unordered_map<uint32_t, Veneer>* by_id_;
+  uint64_t base_, size_;
 };
 
 #endif  // DIVAFT_WITH_FEX
 
 struct GuestBridge::Impl {
   uint64_t guest_base = 0;
+  uint64_t guest_size = 0;
   uint8_t* veneer_space = nullptr;
   uint32_t next_id = 0;
   std::unordered_map<uint32_t, Veneer> by_id;
@@ -98,6 +126,7 @@ GuestBridge::~GuestBridge() { Shutdown(); delete impl_; }
 
 bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   impl_->guest_base = guest_base;
+  impl_->guest_size = guest_size;
   uint64_t vbase = guest_base + guest_size - kVeneerSpace;
   void* p = mmap(reinterpret_cast<void*>(vbase), kVeneerSpace,
                  PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -113,7 +142,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   auto features = FEX::FetchHostFeatures();
   impl_->ctx = FEXCore::Context::Context::CreateNewContext(features);
   if (!impl_->ctx) return false;
-  impl_->syscalls = fextl::make_unique<VeneerSyscallHandler>(&impl_->by_id);
+  impl_->syscalls = fextl::make_unique<VeneerSyscallHandler>(&impl_->by_id, guest_base, guest_size);
   impl_->ctx->SetSignalDelegator(&impl_->signals);
   impl_->ctx->SetSyscallHandler(impl_->syscalls.get());
   if (!impl_->signals.Install()) return false;
@@ -146,7 +175,6 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   auto* thread = impl_->ctx->CreateThread(entry, stack_top);
   if (!thread) return 0;
   auto& state = thread->CurrentFrame->State;
-  // 段表 + 长模式 CS + callret 栈 + PS4 默认 MXCSR
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = impl_->gdt;
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = impl_->gdt;
   state.cs_idx = FEXCore::Core::CPUState::DEFAULT_USER_CS << 3;
@@ -160,9 +188,25 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   for (unsigned i = 0; i < count && i < 6; ++i) {
     state.gregs[FEXCore::X86State::REG_RDI + i] = args[i];
   }
-  impl_->ctx->ExecuteThread(thread);
-  uint64_t ret = state.gregs[FEXCore::X86State::REG_RAX];
+  // callret 预测栈（带守护页）
+  const size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+  const size_t cr_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
+  auto* cr_alloc = static_cast<uint8_t*>(mmap(nullptr, cr_size + 2 * page, PROT_NONE,
+                                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  if (cr_alloc != MAP_FAILED) {
+    mprotect(cr_alloc + page, cr_size, PROT_READ | PROT_WRITE);
+    thread->CallRetStackBase = cr_alloc + page;
+  }
+  t_active_thread = thread;
+  uint64_t ret = 0;
+  if (sigsetjmp(t_exit_jmp, 1) == 0) {
+    impl_->ctx->ExecuteThread(thread);
+  } else {
+    ret = state.gregs[FEXCore::X86State::REG_RAX];
+  }
+  t_active_thread = nullptr;
   impl_->ctx->DestroyThread(thread);
+  if (cr_alloc != MAP_FAILED) munmap(cr_alloc, cr_size + 2 * page);
   return ret;
 #else
   (void)entry; (void)args; (void)count;
