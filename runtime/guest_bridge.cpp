@@ -204,6 +204,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   if (cr_alloc != MAP_FAILED) {
     mprotect(cr_alloc + page, cr_size, PROT_READ | PROT_WRITE);
     thread->CallRetStackBase = cr_alloc + page;
+    state.callret_sp = reinterpret_cast<uint64_t>(cr_alloc + page) + cr_size / 4;
   }
   t_active_thread = thread;
   uint64_t ret = 0;
