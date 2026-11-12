@@ -42,6 +42,19 @@ std::vector<uint8_t> BuildMulsd() {
   return c;
 }
 
+// 宿主调用：rdi=7, rsi=5, call veneer（host 算 7+5=12），结果在 rax
+std::vector<uint8_t> BuildHostCall(uint64_t veneer_addr) {
+  std::vector<uint8_t> c;
+  MovRaxImm64(c, 7);
+  Emit(c, {0x48, 0x89, 0xC7});              // mov rdi, rax
+  MovRaxImm64(c, 5);
+  Emit(c, {0x48, 0x89, 0xC6});              // mov rsi, rax
+  MovRaxImm64(c, veneer_addr);
+  Emit(c, {0xFF, 0xD0});                    // call rax（veneer）
+  Emit(c, {0xF4});                          // hlt
+  return c;
+}
+
 struct Case { const char* name; std::vector<uint8_t> code; uint64_t want; };
 
 }  // namespace
@@ -84,6 +97,25 @@ int main() {
                 c.name, ok ? "PASS" : "FAIL",
                 (unsigned long long)got, (unsigned long long)c.want);
   }
+
+  // veneer 宿主调用：guest 调 host 函数（7+5），验证 guest↔host 桥接往返
+  {
+    ++total;
+    uint64_t veneer = bridge.ExposeHost("host_add",
+        [](const uint64_t* args, unsigned, const double*) -> uint64_t {
+          return args[0] + args[1];
+        });
+    auto code = BuildHostCall(veneer);
+    uint64_t code_addr = base + 0x1000 * total;
+    std::memcpy(reinterpret_cast<void*>(code_addr), code.data(), code.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 12;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x%llx)\n",
+                "host_call", ok ? "PASS" : "FAIL",
+                (unsigned long long)got, 12ULL);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
