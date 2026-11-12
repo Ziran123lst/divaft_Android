@@ -50,16 +50,21 @@ struct Case { const char* name; std::vector<uint8_t> code; uint64_t want; };
 }  // namespace
 
 int main() {
+  setvbuf(stdout, nullptr, _IONBF, 0);
+  setvbuf(stderr, nullptr, _IONBF, 0);
+  std::fprintf(stderr, "[divaft-guest] main started\n");
   void* region = mmap(reinterpret_cast<void*>(kBase), kRegion,
                       PROT_READ | PROT_WRITE | PROT_EXEC,
                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   if (region == MAP_FAILED) { std::perror("mmap"); return 1; }
+  std::fprintf(stderr, "[divaft-guest] mmap ok, calling Init\n");
 
   divaft::GuestBridge bridge;
   if (!bridge.Init(kBase, kRegion)) {
     std::fprintf(stderr, "GuestBridge Init failed\n");
     return 1;
   }
+  std::fprintf(stderr, "[divaft-guest] Init ok\n");
 
   Case cases[] = {
       {"int_add", BuildInt(), 123},
