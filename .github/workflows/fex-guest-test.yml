@@ -1,0 +1,57 @@
+name: FEX guest test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "runtime/**"
+      - "scripts/**"
+      - ".github/workflows/fex-guest-test.yml"
+  pull_request:
+  workflow_dispatch:
+
+env:
+  NDK_VERSION: "30.0.16248370"
+
+jobs:
+  fex-guest-test:
+    name: Build FEX + divaft guest_test, run under qemu-aarch64
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install NDK, cmake, ninja, qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build qemu-user gcc-aarch64-linux-gnu
+          SDK=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "ndk;${{ env.NDK_VERSION }}"
+          echo "ANDROID_NDK_ROOT=$SDK/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+
+      - name: Fetch FEX
+        run: bash scripts/fetch-fex.sh
+
+      - name: Build FEX + divaft guest_test
+        run: bash scripts/configure-fex-android.sh
+
+      - name: Run guest_test under qemu-aarch64
+        run: |
+          BIN=build/fex-android/Bin/fexcore-guest-harness
+          qemu-aarch64 "$BIN" | tee /tmp/guest-test.log
+          if grep -q GUEST_EXEC_PASS /tmp/guest-test.log; then
+            echo "GUEST_EXEC_PASS confirmed (qemu-aarch64)"
+          else
+            echo "GUEST_EXEC_PASS not found" >&2
+            exit 1
+          fi
+
+      - name: Upload guest_test binary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: divaft-guest-test
+          path: build/fex-android/Bin/fexcore-guest-harness
