@@ -140,6 +140,10 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
   FEXCore::Config::ReloadMetaLayer();
   auto features = FEX::FetchHostFeatures();
+  // 目标真机（骁龙 7+Gen3）无 SVE；qemu 宿主误报 SVE 会生成非法指令。强制关闭。
+  features.SupportsSVE128 = false;
+  features.SupportsSVE256 = false;
+  features.SupportsSVEBitPerm = false;
   impl_->ctx = FEXCore::Context::Context::CreateNewContext(features);
   if (!impl_->ctx) return false;
   impl_->syscalls = fextl::make_unique<VeneerSyscallHandler>(&impl_->by_id, guest_base, guest_size);
