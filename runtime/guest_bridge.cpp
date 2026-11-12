@@ -25,7 +25,7 @@
 
 namespace divaft {
 
-constexpr uint64_t kVeneerSpace = 16 * 1024 * 1024;
+constexpr uint64_t kVeneerSpace = 1 * 1024 * 1024;
 constexpr size_t kVeneerSize = 16;
 
 static void EmitVeneer(uint8_t* p, uint32_t id) {

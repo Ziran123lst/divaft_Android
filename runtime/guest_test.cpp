@@ -11,9 +11,6 @@
 
 namespace {
 
-constexpr uint64_t kBase = 0x10000;
-constexpr uint64_t kRegion = 8 * 1024 * 1024;
-
 void Emit(std::vector<uint8_t>& c, std::initializer_list<uint8_t> bytes) {
   c.insert(c.end(), bytes);
 }
@@ -53,14 +50,18 @@ int main() {
   setvbuf(stdout, nullptr, _IONBF, 0);
   setvbuf(stderr, nullptr, _IONBF, 0);
   std::fprintf(stderr, "[divaft-guest] main started\n");
-  void* region = mmap(reinterpret_cast<void*>(kBase), kRegion,
-                      PROT_READ | PROT_WRITE | PROT_EXEC,
-                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+  // 不用 MAP_FIXED 低地址：8MB@0x10000 会覆盖静态二进制自身装载段导致 SIGILL。
+  // 让 OS 选安全地址，4MB 区域（代码+栈+1MB veneer）。
+  constexpr uint64_t kRegion = 4 * 1024 * 1024;
+  void* region = mmap(nullptr, kRegion, PROT_READ | PROT_WRITE | PROT_EXEC,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (region == MAP_FAILED) { std::perror("mmap"); return 1; }
-  std::fprintf(stderr, "[divaft-guest] mmap ok, calling Init\n");
+  const uint64_t base = reinterpret_cast<uint64_t>(region);
+  std::fprintf(stderr, "[divaft-guest] mmap ok base=0x%llx, calling Init\n",
+               (unsigned long long)base);
 
   divaft::GuestBridge bridge;
-  if (!bridge.Init(kBase, kRegion)) {
+  if (!bridge.Init(base, kRegion)) {
     std::fprintf(stderr, "GuestBridge Init failed\n");
     return 1;
   }
@@ -74,7 +75,7 @@ int main() {
   int passed = 0, total = 0;
   for (auto& c : cases) {
     ++total;
-    uint64_t code_addr = kBase + 0x1000 * total;
+    uint64_t code_addr = base + 0x1000 * total;
     std::memcpy(reinterpret_cast<void*>(code_addr), c.code.data(), c.code.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == c.want;
