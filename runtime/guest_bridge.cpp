@@ -81,13 +81,17 @@ public:
                          FEXCore::HLE::SyscallArguments* Args) override {
     auto& gregs = Frame->State.gregs;
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
+    std::fprintf(stderr, "[bridge] syscall id=%u gregs rdi=%llu rsi=%llu | Args[0]=%llu Args[1]=%llu\n",
+                 id, (unsigned long long)gregs[FEXCore::X86State::REG_RDI],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_RSI],
+                 (unsigned long long)Args->Argument[0], (unsigned long long)Args->Argument[1]);
     auto it = by_id_->find(id);
-    if (it == by_id_->end()) return 0;
+    if (it == by_id_->end()) { std::fprintf(stderr, "[bridge] id %u not found\n", id); return 0; }
     const uint64_t int_args[6] = {
-        gregs[FEXCore::X86State::REG_RDI], gregs[FEXCore::X86State::REG_RSI],
-        gregs[FEXCore::X86State::REG_RDX], gregs[FEXCore::X86State::REG_RCX],
-        gregs[FEXCore::X86State::REG_R8],  gregs[FEXCore::X86State::REG_R9]};
+        Args->Argument[0], Args->Argument[1], Args->Argument[2],
+        Args->Argument[3], Args->Argument[4], Args->Argument[5]};
     uint64_t ret = it->second.fn(int_args, 6, nullptr);
+    std::fprintf(stderr, "[bridge] host %s ret=%llu\n", it->second.name.c_str(), (unsigned long long)ret);
     gregs[FEXCore::X86State::REG_RAX] = ret;
     return ret;
   }
