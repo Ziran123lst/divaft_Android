@@ -1,0 +1,41 @@
+// divaft_Android — HLE 接线实现（原创）
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "divaft/hle_wire.h"
+
+#include <fstream>
+#include <sstream>
+
+namespace divaft {
+
+void HleWire::Register(const std::string& nid, const std::string& lib,
+                       const std::string& name, HleFn fn) {
+  bindings_[nid] = HleBinding{nid, lib, name, std::move(fn)};
+}
+
+const HleBinding* HleWire::Resolve(const std::string& nid) const {
+  auto it = bindings_.find(nid);
+  return it == bindings_.end() ? nullptr : &it->second;
+}
+
+uint64_t HleWire::StubOk(const uint64_t*, unsigned) { return 0; }
+
+// 契约文件格式（TSV，由 tools/gen_contract_tsv.py 从 hle_contract.json 生成）：
+//   nid \t lib \t name \t source
+bool HleWire::LoadContract(const std::string& path) {
+  std::ifstream f(path);
+  if (!f) return false;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream ss(line);
+    std::string nid, lib, name, source;
+    if (!std::getline(ss, nid, '\t')) continue;
+    std::getline(ss, lib, '\t');
+    std::getline(ss, name, '\t');
+    std::getline(ss, source, '\t');
+    contract_[nid] = ContractEntry{lib, name, source};
+  }
+  return true;
+}
+
+}  // namespace divaft

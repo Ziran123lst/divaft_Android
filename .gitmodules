@@ -1,0 +1,6 @@
+[submodule "third_party/fex"]
+	path = third_party/fex
+	url = https://github.com/FEX-Emu/FEX.git
+[submodule "third_party/shadps4"]
+	path = third_party/shadps4
+	url = https://github.com/shadps4-emu/shadPS4.git
