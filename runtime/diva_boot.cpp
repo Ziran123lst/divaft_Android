@@ -307,6 +307,41 @@ static bool RunSelfTests() {
                 "ind_call", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
+  // PLT 样最小复现：call plt → plt: jmp [GOT] → veneer（启动经 PLT 调 operator new 的双层间接）。
+  // ind_call 是单层 call rax；此用例加 PLT 尾跳转，验证 callret 返回预测是否被 jmp 干扰。
+  {
+    ++total;
+    uint64_t plt_veneer = bridge.ExposeHost("plt_alloc",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t {
+          return 0xDEF;
+        });
+    uint64_t got_addr = base + 0x13000;
+    uint64_t plt_addr = base + 0x14000;
+    uint64_t code_addr = base + 0x15000;
+    *reinterpret_cast<uint64_t*>(got_addr) = plt_veneer;
+    // PLT 桩：jmp [rip+disp]（FF 25），disp 相对 plt+6
+    {
+      uint8_t plt[6] = {0xFF, 0x25, 0, 0, 0, 0};
+      int32_t disp = static_cast<int32_t>(got_addr - (plt_addr + 6));
+      std::memcpy(plt + 2, &disp, 4);
+      std::memcpy(reinterpret_cast<void*>(plt_addr), plt, 6);
+    }
+    std::vector<uint8_t> c;
+    for (int i = 0; i < 3; ++i) {
+      size_t call_off = c.size();
+      c.push_back(0xE8);                    // call plt（rel32）
+      int32_t rel = static_cast<int32_t>(plt_addr - (code_addr + call_off + 5));
+      for (int b = 0; b < 4; ++b) c.push_back((rel >> (b * 8)) & 0xFF);
+    }
+    Emit(c, {0xF4});                        // hlt
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 0xDEF;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0xdef)\n",
+                "plt_call", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
