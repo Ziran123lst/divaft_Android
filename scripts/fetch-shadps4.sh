@@ -15,18 +15,16 @@ fi
 git -C "$DEST" fetch --depth 1 origin "$REV"
 git -C "$DEST" checkout --detach --force FETCH_HEAD
 
-# shader_recompiler 所需 externals（浅克隆）。sirit=SPIR-V 发射，其余为头/小库。
+# shader_recompiler 所需 externals（浅克隆）。sirit=SPIR-V 发射（含嵌套 SPIRV-Headers，需 recursive）。
+# gcn 为 vendored 随 checkout 自带；xxhash 小写；spirv-headers 在 sirit 内嵌套。
 SUBMODULES=(
-  externals/sirit
   externals/fmt
   externals/magic_enum
   externals/half
   externals/robin-map
   externals/ext-boost
-  externals/gcn
   externals/vulkan-headers
-  externals/spirv-headers
-  externals/xxHash
+  externals/xxhash
   externals/spdlog
 )
 for sm in "${SUBMODULES[@]}"; do
@@ -34,4 +32,8 @@ for sm in "${SUBMODULES[@]}"; do
   git -C "$DEST" submodule update --init --depth 1 "$sm" || \
     echo "warn: $sm 子模块初始化失败（可能需手动补）"
 done
+# sirit 及其嵌套 SPIRV-Headers
+echo "=== submodule externals/sirit (recursive) ==="
+git -C "$DEST" submodule update --init --recursive --depth 1 externals/sirit || \
+  echo "warn: sirit 子模块初始化失败"
 echo "FETCH_SHADPS4_OK $DEST"
