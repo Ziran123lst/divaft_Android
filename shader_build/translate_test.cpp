@@ -24,7 +24,7 @@ int main() {
       .hash = 0x1234,
   };
   Shader::Info info(Shader::HwStage::Compute, Shader::SwStage::Compute, params);
-  Shader::RuntimeInfo runtime_info;
+  Shader::RuntimeInfo runtime_info{};
   runtime_info.Initialize(Shader::HwStage::Compute, Shader::SwStage::Compute);
 
   Shader::Profile profile{};
