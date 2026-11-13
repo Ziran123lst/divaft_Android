@@ -26,6 +26,7 @@ SUBMODULES=(
   externals/vulkan-headers
   externals/xxhash
   externals/spdlog
+  externals/json
 )
 for sm in "${SUBMODULES[@]}"; do
   echo "=== submodule $sm ==="

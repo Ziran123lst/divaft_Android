@@ -47,9 +47,10 @@ target_include_directories(divaft_shader_recompiler PRIVATE
   "${SHADPS4}/externals/ext-boost"
   "${SHADPS4}/externals/gcn/include"
   "${SHADPS4}/externals/vulkan-headers/include"
-  "${SHADPS4}/externals/spirv-headers/include"
-  "${SHADPS4}/externals/xxHash"
+  "${SHADPS4}/externals/sirit/externals/SPIRV-Headers/include"
+  "${SHADPS4}/externals/xxhash"
   "${SHADPS4}/externals/spdlog/include"
+  "${SHADPS4}/externals/json/include"
 )
 target_link_libraries(divaft_shader_recompiler PRIVATE sirit fmt::fmt)
 target_compile_options(divaft_shader_recompiler PRIVATE -Wno-everything)
