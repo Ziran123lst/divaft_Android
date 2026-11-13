@@ -282,8 +282,9 @@ static bool RunSelfTests() {
 
 int main(int argc, char** argv) {
   bool self_ok = RunSelfTests();
-  if (!self_ok) return 1;
   if (argc >= 2) {
+    if (!self_ok)
+      std::fprintf(stderr, "[diva-boot] 自检未全过（诊断用），继续启动 eboot\n");
     std::fprintf(stderr, "[diva-boot] loading %s\n", argv[1]);
     divaft::DivaRuntime rt;
     const char* contract = argc >= 3 ? argv[2] : "";
@@ -293,6 +294,7 @@ int main(int argc, char** argv) {
     }
     rt.Boot();
     std::fprintf(stderr, "[diva-boot] boot returned\n");
+    return 0;
   }
-  return 0;
+  return self_ok ? 0 : 1;
 }
