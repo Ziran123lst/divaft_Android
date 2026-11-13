@@ -55,48 +55,30 @@ static void EmitVeneer(uint8_t* p, uint32_t id) {
 #ifdef DIVAFT_WITH_FEX
 
 namespace {
-thread_local FEXCore::Core::InternalThreadState* t_active_thread = nullptr;
-thread_local sigjmp_buf t_exit_jmp;
-constexpr uint8_t kHlt = 0xF4;
-
-// guest 以 HLT 结束执行（直接 HLT 或经返回蹦床 ret 到 exit_hlt）；故障信号里检测 HLT 跳出。
-void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
-  auto* thread = t_active_thread;
-  if (thread) {
-    const uint64_t rip = thread->CurrentFrame->State.rip;
-    if (rip && reinterpret_cast<const uint8_t*>(rip)[0] == kHlt) {
-      siglongjmp(t_exit_jmp, 1);
-    }
-    // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / 全寄存器 / rip 处字节。
-    auto& gregs = thread->CurrentFrame->State.gregs;
-    std::fprintf(stderr, "[guest-crash] sig=%d code=%d rip=0x%llx faultaddr=%llx bytes:",
-                 sig, info->si_code, (unsigned long long)rip, (unsigned long long)info->si_addr);
-    if (rip) {
-      for (int i = 0; i < 12; ++i)
-        std::fprintf(stderr, " %02x", reinterpret_cast<const uint8_t*>(rip)[i]);
-    }
-    std::fprintf(stderr, "\n[guest-crash] gregs:");
-    for (int i = 0; i < 16; ++i)
-      std::fprintf(stderr, " r%d=%llx", i, (unsigned long long)gregs[i]);
-    std::fprintf(stderr, "\n");
-    siglongjmp(t_exit_jmp, 2);
+// 崩溃诊断：打印 guest rip / fault / 全寄存器 / rip 处字节（EnableExitOnHLT 下由故障数据触发）。
+void LogGuestCrash(FEXCore::Core::InternalThreadState* thread) {
+  auto& state = thread->CurrentFrame->State;
+  auto& fault = thread->CurrentFrame->SynchronousFaultData;
+  const uint64_t rip = state.rip;
+  std::fprintf(stderr, "[guest-crash] trap=%u err=%u rip=0x%llx bytes:",
+               (unsigned)fault.TrapNo, (unsigned)fault.err_code, (unsigned long long)rip);
+  if (rip) {
+    for (int i = 0; i < 12; ++i)
+      std::fprintf(stderr, " %02x", reinterpret_cast<const uint8_t*>(rip)[i]);
   }
-  _exit(128 + sig);
+  std::fprintf(stderr, "\n[guest-crash] gregs:");
+  for (int i = 0; i < 16; ++i)
+    std::fprintf(stderr, " r%d=%llx", i, (unsigned long long)state.gregs[i]);
+  std::fprintf(stderr, "\n");
 }
 }  // namespace
 
+// 参照 uncharted：不再自装 sigaction/siglongjmp，交由 FEX 内部信号处理 + EnableExitOnHLT 干净退出。
+// 仅提供回调返回桩（HandleCallback 用）。
 class GuestSignalDelegator final : public FEXCore::SignalDelegator {
 public:
-  bool Install() {
-    struct sigaction act {};
-    act.sa_sigaction = &HostSignalHandler;
-    act.sa_flags = SA_SIGINFO;
-    sigemptyset(&act.sa_mask);
-    for (int sig : {SIGSEGV, SIGILL, SIGTRAP, SIGBUS}) {
-      if (sigaction(sig, &act, nullptr) != 0) return false;
-    }
-    return true;
-  }
+  uint64_t callback_return = 0;
+  uintptr_t GetThunkCallbackRET() const override { return callback_return; }
 };
 
 class VeneerSyscallHandler final : public FEXCore::HLE::SyscallHandler {
@@ -190,10 +172,12 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   if (p == MAP_FAILED) return false;
   impl_->veneer_space = static_cast<uint8_t*>(p);
-  // 返回蹦床：veneer 空间首 16 字节放 HLT（id 0 保留）。guest 函数 ret 到此即退出。
+  // 返回蹦床：veneer 空间首 16 字节放 HLT（id 0 保留）；+16 放 FEX CALLBACKRET(0f 3e)。
   impl_->exit_hlt = vbase;
   std::memset(impl_->veneer_space, 0, kVeneerSize);
-  impl_->veneer_space[0] = 0xF4;  // hlt
+  impl_->veneer_space[0] = 0xF4;                 // hlt（返回蹦床）
+  impl_->veneer_space[16] = 0x0F; impl_->veneer_space[17] = 0x3E;  // CALLBACKRET
+  impl_->signals.callback_return = vbase + 16;
 
   // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted/shadPS4）。
   // shadPS4 Tcb 布局：[0]=self [8]=dtv [16]=thread [24/32]=spare [40]=canary [48]=fiber。
@@ -228,7 +212,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   impl_->syscalls = fextl::make_unique<VeneerSyscallHandler>(&impl_->by_id, guest_base, guest_size);
   impl_->ctx->SetSignalDelegator(&impl_->signals);
   impl_->ctx->SetSyscallHandler(impl_->syscalls.get());
-  if (!impl_->signals.Install()) return false;
+  impl_->ctx->EnableExitOnHLT();  // HLT 干净退出 ExecuteThread（弃用 siglongjmp，参照 uncharted）
   if (!impl_->ctx->InitCore()) return false;
 #endif
   impl_->initialized = true;
@@ -305,17 +289,16 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     thread->CallRetStackBase = cr_alloc + page;
     state.callret_sp = reinterpret_cast<uint64_t>(cr_alloc + page) + cr_size / 4;
   }
-  t_active_thread = thread;
   std::fprintf(stderr, "[callguest] entry=0x%llx rsp=0x%llx stackbase=0x%llx tcb=0x%llx\n",
                (unsigned long long)entry, (unsigned long long)rsp,
                (unsigned long long)reinterpret_cast<uint64_t>(stack), (unsigned long long)impl_->tcb);
-  uint64_t ret = 0;
-  if (sigsetjmp(t_exit_jmp, 1) == 0) {
-    impl_->ctx->ExecuteThread(thread);
-  } else {
-    ret = state.gregs[FEXCore::X86State::REG_RAX];
+  // EnableExitOnHLT：guest 落 HLT（含返回蹦床）时 ExecuteThread 干净返回；故障亦返回并置故障数据。
+  impl_->ctx->ExecuteThread(thread);
+  uint64_t ret = state.gregs[FEXCore::X86State::REG_RAX];
+  auto& fault = thread->CurrentFrame->SynchronousFaultData;
+  if (fault.FaultToTopAndGeneratedException && state.rip != impl_->exit_hlt) {
+    LogGuestCrash(thread);
   }
-  t_active_thread = nullptr;
   impl_->ctx->DestroyThread(thread);
   if (cr_alloc != MAP_FAILED) munmap(cr_alloc, cr_size + 2 * page);
   munmap(stack, kGuestStack);
