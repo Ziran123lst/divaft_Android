@@ -134,6 +134,41 @@ int main(int argc, char** argv){
   { double nan=std::nan(""); uint64_t r=callFpRax("__isnan",{nan}); CHECK(r==1); }
   { double one=1.0; uint64_t r=callFpRax("__isnan",{one}); CHECK(r==0); }
 
+  // printf 变参族：经 internal_snprintf 绑定实调（跨 ABI 逐项格式化）
+  {
+    auto it = nid_of.find(std::string("libc\tinternal_snprintf"));
+    CHECK(it!=nid_of.end());
+    const HleBinding* b = (it!=nid_of.end()) ? wire.Resolve(it->second) : nullptr;
+    CHECK(b!=nullptr);
+    if (b) {
+      char buf[512];
+      // snp(fmt, int_args..., fp_args...)：a[0]=buf,a[1]=size,a[2]=fmt,a[3..5]=整数参
+      auto snp = [&](const char* fmt, std::initializer_list<uint64_t> ia,
+                     std::initializer_list<double> fa)->std::string{
+        std::vector<uint64_t> a(14,0);
+        a[0]=(uint64_t)buf; a[1]=sizeof(buf); a[2]=(uint64_t)fmt;
+        int k=3; for(auto v:ia){ if(k<14) a[k++]=v; }
+        std::vector<double> f(fa); f.resize(8,0.0);
+        HleReturn hr{};
+        b->fn(a.data(),(unsigned)a.size(),f.data(),&hr);
+        return std::string(buf);
+      };
+      CHECK(snp("%d",{42},{})=="42");
+      CHECK(snp("%s",{(uint64_t)"hello"},{})=="hello");
+      CHECK(snp("%d %s %x",{255,(uint64_t)"hi",255},{})=="255 hi ff");
+      CHECK(snp("%f",{},{3.14})=="3.140000");
+      CHECK(snp("%.2f",{},{3.14159})=="3.14");
+      CHECK(snp("%d %f %d",{1,3},{2.5})=="1 2.500000 3");
+      CHECK(snp("%5d|%-5d|",{42,42},{})=="   42|42   |");
+      CHECK(snp("%%",{},{})=="%");
+      CHECK(snp("%c",{65},{})=="A");
+      CHECK(snp("%llx",{0x123456789ABCULL},{})=="123456789abc");
+      CHECK(snp("%lld",{1234567890123ULL},{})=="1234567890123");
+      CHECK(snp("no spec",{},{})=="no spec");
+      CHECK(snp("%s=%d",{(uint64_t)"x",7},{})=="x=7");
+    }
+  }
+
   if(g_fail==0) std::printf("HLE_WIRE_TEST_PASS\n");
   else std::printf("HLE_WIRE_TEST_FAIL (%d)\n", g_fail);
   return g_fail?1:0;

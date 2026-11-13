@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <mutex>
 #include <atomic>
+#include <string>
 
 namespace divaft {
 
@@ -42,6 +43,122 @@ inline void SetF32(HleReturn* ret, float f) {
 
 // PS4 struct tm 为 9 个 int（无 glibc 的 tm_gmtoff/tm_zone）。guest 侧按此布局。
 struct GuestTm { int sec, min, hour, mday, mon, year, wday, yday, isdst; };
+
+// ---- guest x86-64 变参提取（printf 族） ----
+// SysV AMD64：整数参依次 RDI,RSI,RDX,RCX,R8,R9 后转栈；SSE 参依次 XMM0..7 后转栈。
+// 桥接已编组：ia[0]=format，ia[1..5]=整数寄存器参，ia[6..13]=栈溢出参（按声明序），fa[0..7]=XMM。
+// 跨 ABI：不构造 va_list（guest x86-64 与宿主 ARM64 不同），改为逐 specifier 取值后用宿主 snprintf。
+struct GuestVarArgs {
+  const uint64_t* ia;
+  const double* fa;
+  int int_reg = 1;   // 下一个整数寄存器参下标（1..5；0 是 format）
+  int fp_reg = 0;    // 下一个 SSE 寄存器参下标（0..7）
+  int stack = 6;     // 下一个栈溢出参下标（6..13）
+  uint64_t next_int() {
+    if (int_reg <= 5) return ia[int_reg++];
+    if (stack <= 13) return ia[stack++];
+    return 0;
+  }
+  double next_fp() {
+    if (fp_reg <= 7) return fa[fp_reg++];
+    if (stack <= 13) { uint64_t u = ia[stack++]; double d; std::memcpy(&d, &u, 8); return d; }
+    return 0.0;
+  }
+};
+
+// 按格式串格式化到 out（容量 outsz，含结尾 0）。返回写入字符数（不含 0）。
+static size_t FormatGuest(char* out, size_t outsz, const char* fmt, GuestVarArgs& va) {
+  if (!out || outsz == 0) return 0;
+  size_t oi = 0;
+  auto emit = [&](const char* s) {
+    for (const char* q = s; *q && oi + 1 < outsz; ++q) out[oi++] = *q;
+  };
+  for (const char* p = fmt; *p;) {
+    if (*p != '%') {
+      if (oi + 1 < outsz) out[oi++] = *p;
+      ++p; continue;
+    }
+    ++p;
+    if (*p == '%') { if (oi + 1 < outsz) out[oi++] = '%'; ++p; continue; }
+    // flags
+    std::string flags;
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0') flags += *p++;
+    // width
+    std::string width;
+    if (*p == '*') { width = std::to_string((int)va.next_int()); ++p; }
+    else while (*p >= '0' && *p <= '9') width += *p++;
+    // precision
+    std::string prec;
+    if (*p == '.') {
+      ++p;
+      if (*p == '*') { prec = std::to_string((int)va.next_int()); ++p; }
+      else while (*p >= '0' && *p <= '9') prec += *p++;
+      prec = "." + prec;
+    }
+    // length
+    std::string len;
+    while (*p == 'h' || *p == 'l' || *p == 'z' || *p == 'j' || *p == 't' || *p == 'L') len += *p++;
+    char spec = *p;
+    if (!spec) break;
+    ++p;
+    std::string sf = "%" + flags + width + prec + len + spec;
+    char tmp[1024];
+    tmp[0] = 0;
+    switch (spec) {
+      case 'd': case 'i': {
+        uint64_t v = va.next_int();
+        if (len == "hh") std::snprintf(tmp, sizeof tmp, sf.c_str(), (signed char)v);
+        else if (len == "h") std::snprintf(tmp, sizeof tmp, sf.c_str(), (short)v);
+        else if (len == "l" || len == "ll" || len == "z" || len == "j" || len == "t")
+          std::snprintf(tmp, sizeof tmp, sf.c_str(), (long long)v);
+        else std::snprintf(tmp, sizeof tmp, sf.c_str(), (int)v);
+        break;
+      }
+      case 'u': case 'x': case 'X': case 'o': {
+        uint64_t v = va.next_int();
+        if (len == "hh") std::snprintf(tmp, sizeof tmp, sf.c_str(), (unsigned char)v);
+        else if (len == "h") std::snprintf(tmp, sizeof tmp, sf.c_str(), (unsigned short)v);
+        else if (len == "l" || len == "ll" || len == "z" || len == "j" || len == "t")
+          std::snprintf(tmp, sizeof tmp, sf.c_str(), (unsigned long long)v);
+        else std::snprintf(tmp, sizeof tmp, sf.c_str(), (unsigned)v);
+        break;
+      }
+      case 'c': {
+        int ch = (int)va.next_int();
+        tmp[0] = (char)ch; tmp[1] = 0;
+        break;
+      }
+      case 's': {
+        uint64_t sp = va.next_int();
+        const char* s = sp ? reinterpret_cast<const char*>(sp) : "(null)";
+        std::snprintf(tmp, sizeof tmp, sf.c_str(), s);
+        break;
+      }
+      case 'p': {
+        uint64_t pv = va.next_int();
+        std::snprintf(tmp, sizeof tmp, sf.c_str(), reinterpret_cast<void*>(pv));
+        break;
+      }
+      case 'f': case 'e': case 'E': case 'g': case 'G': case 'a': case 'A': {
+        double d = va.next_fp();
+        std::snprintf(tmp, sizeof tmp, sf.c_str(), d);
+        break;
+      }
+      case 'n': {
+        uint64_t np = va.next_int();
+        if (np) *reinterpret_cast<int*>(np) = (int)oi;
+        break;
+      }
+      default:
+        // 未知 specifier：原样输出，避免崩溃
+        tmp[0] = spec; tmp[1] = 0;
+        break;
+    }
+    emit(tmp);
+  }
+  out[oi] = 0;
+  return oi;
+}
 }  // namespace
 
 size_t RegisterLibcHle(HleWire& wire, GuestHeap* heap) {
@@ -319,6 +436,35 @@ size_t RegisterLibcHle(HleWire& wire, GuestHeap* heap) {
     return std::isnan(F32(fp,0)) ? 1 : 0; });
   regExt("__signbitf", [](const uint64_t*, unsigned, const double* fp, HleReturn*) -> uint64_t {
     return std::signbit(F32(fp,0)) ? 1 : 0; });
+
+  // ---------------- printf 变参族（跨 ABI 逐项格式化） ----------------
+  regExt("printf", [](const uint64_t* a, unsigned, const double* fp, HleReturn*) -> uint64_t {
+    if (!a[0]) return 0;
+    GuestVarArgs va{a, fp};                 // format=a[0]，变参整数从 a[1]
+    char buf[4096];
+    size_t n = FormatGuest(buf, sizeof buf, reinterpret_cast<const char*>(a[0]), va);
+    std::fputs(buf, stdout);
+    return n; });
+  regExt("fprintf", [](const uint64_t* a, unsigned, const double* fp, HleReturn*) -> uint64_t {
+    if (!a[1]) return 0;
+    GuestVarArgs va{a, fp}; va.int_reg = 2;  // format=a[1]（a[0]=FILE*）
+    char buf[4096];
+    size_t n = FormatGuest(buf, sizeof buf, reinterpret_cast<const char*>(a[1]), va);
+    FILE* f = reinterpret_cast<FILE*>(a[0]);
+    if (f) std::fputs(buf, f);
+    return n; });
+  regExt("internal_snprintf", [](const uint64_t* a, unsigned, const double* fp, HleReturn*) -> uint64_t {
+    if (!a[2]) return 0;
+    GuestVarArgs va{a, fp}; va.int_reg = 3;  // (buf, size, fmt, ...)
+    char* buf = reinterpret_cast<char*>(a[0]);
+    if (!buf || a[1] == 0) return 0;
+    return FormatGuest(buf, a[1], reinterpret_cast<const char*>(a[2]), va); });
+  regExt("sprintf_s", [](const uint64_t* a, unsigned, const double* fp, HleReturn*) -> uint64_t {
+    if (!a[2]) return 0;
+    GuestVarArgs va{a, fp}; va.int_reg = 3;  // (buf, size, fmt, ...)
+    char* buf = reinterpret_cast<char*>(a[0]);
+    if (!buf || a[1] == 0) return 0;
+    return FormatGuest(buf, a[1], reinterpret_cast<const char*>(a[2]), va); });
 
   return n;
 }
