@@ -211,27 +211,11 @@ uint64_t GuestBridge::DispatchSyscall(uint32_t veneer_id, const uint64_t* sysv_a
 uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned count) {
 #ifdef DIVAFT_WITH_FEX
   if (!impl_->initialized || !impl_->ctx) return 0;
-  // 假设验证：栈放回 guest 区域内（phase-2 位置），而非独立 mmap。
-  const uint64_t stack_addr = impl_->guest_base + impl_->guest_size - kVeneerSpace - kGuestStack;
-  uint8_t* stack = static_cast<uint8_t*>(mmap(reinterpret_cast<void*>(stack_addr), kGuestStack,
-                                              PROT_READ | PROT_WRITE,
-                                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0));
-  if (stack == MAP_FAILED) return 0;
-  const uint64_t stack_top = reinterpret_cast<uint64_t>(stack) + kGuestStack;
-  // 顶部留 4KB 白（参照 uncharted CallOutermost 用 stack_top-4096）：
-  // HandleSyscall 会读 [rsp+8..rsp+72] 栈参，rsp 贴栈顶会越界并扰动 guest 寄存器。
-  const uint64_t rsp_top = stack_top - 4096;
-  // 返回蹦床 + 超过 6 个的栈参（参照 uncharted CallOutermost）。
-  uint64_t rsp = (rsp_top & ~uint64_t(15)) - 8 * (count > 6 ? ((count - 6 + 1) & ~1u) : 0);
-  for (unsigned i = 6; i < count; ++i)
-    *reinterpret_cast<uint64_t*>(rsp + 8 * (i - 6)) = args[i];
-  rsp -= 8;
-  *reinterpret_cast<uint64_t*>(rsp) = impl_->exit_hlt;  // 返回地址 = HLT
-
+  // 完全恢复 phase-2 栈/RSP 设置（隔离验证 mem_hle）
+  const uint64_t stack_top = impl_->guest_base + impl_->guest_size - kVeneerSpace - (1 << 20);
   auto* thread = impl_->ctx->CreateThread(entry, stack_top);
-  if (!thread) { munmap(stack, kGuestStack); return 0; }
+  if (!thread) return 0;
   auto& state = thread->CurrentFrame->State;
-  // 持久 GDT（impl_ 成员，稳定地址）：FEX 执行期引用段表，局部数组会引发寄存器异常。
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = impl_->gdt;
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = impl_->gdt;
   state.cs_idx = FEXCore::Core::CPUState::DEFAULT_USER_CS << 3;
@@ -241,12 +225,10 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   cs->L = 1; cs->D = 0;
   state.cs_cached = FEXCore::Core::CPUState::CalculateGDTBase(*cs);
   state.mxcsr = 0x9fc0;  // PS4 默认 FTZ+DAZ
-  state.gregs[FEXCore::X86State::REG_RSP] = rsp;
-  // SysV host→guest 参数：RDI/RSI/RDX/RCX/R8/R9。
-  const int regs[6] = {FEXCore::X86State::REG_RDI, FEXCore::X86State::REG_RSI,
-                       FEXCore::X86State::REG_RDX, FEXCore::X86State::REG_RCX,
-                       FEXCore::X86State::REG_R8,  FEXCore::X86State::REG_R9};
-  for (unsigned i = 0; i < count && i < 6; ++i) state.gregs[regs[i]] = args[i];
+  state.gregs[FEXCore::X86State::REG_RSP] = stack_top;
+  for (unsigned i = 0; i < count && i < 6; ++i) {
+    state.gregs[FEXCore::X86State::REG_RDI + i] = args[i];
+  }
 
   // callret 预测栈（带守护页，per-call）。
   const size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
@@ -275,7 +257,6 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   t_active_thread = nullptr;
   impl_->ctx->DestroyThread(thread);
   if (cr_alloc != MAP_FAILED) munmap(cr_alloc, cr_size + 2 * page);
-  munmap(stack, kGuestStack);
   return ret;
 #else
   (void)entry; (void)args; (void)count;
