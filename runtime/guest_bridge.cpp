@@ -90,11 +90,6 @@ public:
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
     auto it = by_id_->find(id);
     if (it == by_id_->end()) return 0;
-    // 临时诊断：syscall 入口全部通用寄存器（定位 mem_hle rcx/r8/r9 丢失）
-    std::fprintf(stderr, "[sys-diag] id=%u rip=%llx rsp=%llx\n", id,
-                 (unsigned long long)Frame->State.rip, (unsigned long long)gregs[FEXCore::X86State::REG_RSP]);
-    for (int r = 0; r < 16; ++r)
-      std::fprintf(stderr, "[sys-diag]   greg[%d]=%llx\n", r, (unsigned long long)gregs[r]);
     // SysV 函数参数 RDI/RSI/RDX/RCX/R8/R9；veneer 在 syscall 前 mov r10,rcx，
     // 因 syscall 清 RCX（存返回 RIP），故第 4 参从 R10 读（syscall ABI）。
     uint64_t int_args[14] = {
@@ -211,10 +206,21 @@ uint64_t GuestBridge::DispatchSyscall(uint32_t veneer_id, const uint64_t* sysv_a
 uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned count) {
 #ifdef DIVAFT_WITH_FEX
   if (!impl_->initialized || !impl_->ctx) return 0;
-  // 完全恢复 phase-2 栈/RSP 设置（隔离验证 mem_hle）
-  const uint64_t stack_top = impl_->guest_base + impl_->guest_size - kVeneerSpace - (1 << 20);
+  // per-call 私有 guest 栈：并发 guest 线程互不干扰（pthread_create 前提）。
+  uint8_t* stack = static_cast<uint8_t*>(mmap(nullptr, kGuestStack, PROT_READ | PROT_WRITE,
+                                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  if (stack == MAP_FAILED) return 0;
+  const uint64_t stack_top = reinterpret_cast<uint64_t>(stack) + kGuestStack;
+  // 顶部留 4KB 白：HandleSyscall 读 [rsp+8..rsp+72] 栈参不越界。
+  const uint64_t rsp_top = stack_top - 4096;
+  uint64_t rsp = (rsp_top & ~uint64_t(15)) - 8 * (count > 6 ? ((count - 6 + 1) & ~1u) : 0);
+  for (unsigned i = 6; i < count; ++i)
+    *reinterpret_cast<uint64_t*>(rsp + 8 * (i - 6)) = args[i];
+  rsp -= 8;
+  *reinterpret_cast<uint64_t*>(rsp) = impl_->exit_hlt;  // 返回蹦床：ret 落 HLT 退出
+
   auto* thread = impl_->ctx->CreateThread(entry, stack_top);
-  if (!thread) return 0;
+  if (!thread) { munmap(stack, kGuestStack); return 0; }
   auto& state = thread->CurrentFrame->State;
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = impl_->gdt;
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = impl_->gdt;
@@ -225,10 +231,12 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   cs->L = 1; cs->D = 0;
   state.cs_cached = FEXCore::Core::CPUState::CalculateGDTBase(*cs);
   state.mxcsr = 0x9fc0;  // PS4 默认 FTZ+DAZ
-  state.gregs[FEXCore::X86State::REG_RSP] = stack_top;
-  for (unsigned i = 0; i < count && i < 6; ++i) {
-    state.gregs[FEXCore::X86State::REG_RDI + i] = args[i];
-  }
+  state.gregs[FEXCore::X86State::REG_RSP] = rsp;
+  // SysV host→guest 参数：RDI/RSI/RDX/RCX/R8/R9。
+  const int regs[6] = {FEXCore::X86State::REG_RDI, FEXCore::X86State::REG_RSI,
+                       FEXCore::X86State::REG_RDX, FEXCore::X86State::REG_RCX,
+                       FEXCore::X86State::REG_R8,  FEXCore::X86State::REG_R9};
+  for (unsigned i = 0; i < count && i < 6; ++i) state.gregs[regs[i]] = args[i];
 
   // callret 预测栈（带守护页，per-call）。
   const size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
@@ -241,13 +249,6 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     state.callret_sp = reinterpret_cast<uint64_t>(cr_alloc + page) + cr_size / 4;
   }
   t_active_thread = thread;
-  // 临时诊断：dump 入口代码字节，确认 guest 代码在内存中正确
-  {
-    const uint8_t* cp = reinterpret_cast<const uint8_t*>(entry);
-    char buf[256]; int off = 0;
-    for (int i = 0; i < 80 && off < 240; ++i) off += std::snprintf(buf+off, 240-off, "%02x ", cp[i]);
-    std::fprintf(stderr, "[code-diag] entry=%llx bytes: %s\n", (unsigned long long)entry, buf);
-  }
   uint64_t ret = 0;
   if (sigsetjmp(t_exit_jmp, 1) == 0) {
     impl_->ctx->ExecuteThread(thread);
@@ -257,6 +258,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   t_active_thread = nullptr;
   impl_->ctx->DestroyThread(thread);
   if (cr_alloc != MAP_FAILED) munmap(cr_alloc, cr_size + 2 * page);
+  munmap(stack, kGuestStack);
   return ret;
 #else
   (void)entry; (void)args; (void)count;
