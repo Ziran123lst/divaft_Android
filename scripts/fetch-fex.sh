@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 URL="https://github.com/FEX-Emu/FEX.git"
-REV="f2b679f6028ce1c38875233aecfcf5d3f8ebecec"
+REV="4f9c1f1e36443d22d7655477e34f51b95b685bf1"  # FEX-2611.1（2026-11-11，含 Android/FP 修复；补丁已 rebase）
 DEST=${FEX_SRC:-"$ROOT/third_party/fex"}
 
 SUBMODULES=(
