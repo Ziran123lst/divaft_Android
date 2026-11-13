@@ -281,6 +281,32 @@ static bool RunSelfTests() {
                 (unsigned long long)got, (unsigned long long)Bits(6.0));
   }
 
+  // 最小复现：间接 call veneer 多次（模拟启动经 PLT/GOT 调 operator new）。
+  // host_call 用直接 call rel32 能过；启动经间接 call 崩。此用例隔离"间接 call+重复"。
+  {
+    ++total;
+    uint64_t ind_veneer = bridge.ExposeHost("ind_alloc",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t {
+          return 0xABC;  // 模拟 operator new 返回指针
+        });
+    uint64_t ptr_addr = base + 0x11000;   // GOT 样数据页
+    uint64_t code_addr = base + 0x12000;
+    *reinterpret_cast<uint64_t*>(ptr_addr) = ind_veneer;
+    std::vector<uint8_t> c;
+    for (int i = 0; i < 3; ++i) {
+      Emit(c, {0x48, 0xA1});              // mov rax, [moffs64]
+      for (int b = 0; b < 8; ++b) c.push_back((ptr_addr >> (b * 8)) & 0xFF);
+      Emit(c, {0xFF, 0xD0});              // call rax（间接）
+    }
+    Emit(c, {0xF4});                       // hlt
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 0xABC;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0xabc)\n",
+                "ind_call", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
