@@ -151,6 +151,7 @@ struct GuestBridge::Impl {
   fextl::unique_ptr<FEXCore::Context::Context> ctx;
   GuestSignalDelegator signals;
   fextl::unique_ptr<VeneerSyscallHandler> syscalls;
+  FEXCore::Core::CPUState::gdt_segment gdt[32] {};  // 持久段表（FEX 执行期引用，须稳定地址）
 #endif
 };
 
@@ -231,10 +232,9 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   auto* thread = impl_->ctx->CreateThread(entry, stack_top);
   if (!thread) { munmap(stack, kGuestStack); return 0; }
   auto& state = thread->CurrentFrame->State;
-  // per-call GDT（局部数组，执行期内有效），避免多线程共享段表竞态。
-  FEXCore::Core::CPUState::gdt_segment gdt[32] {};
-  state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = gdt;
-  state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = gdt;
+  // 持久 GDT（impl_ 成员，稳定地址）：FEX 执行期引用段表，局部数组会引发寄存器异常。
+  state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = impl_->gdt;
+  state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = impl_->gdt;
   state.cs_idx = FEXCore::Core::CPUState::DEFAULT_USER_CS << 3;
   auto* cs = FEXCore::Core::CPUState::GetSegmentFromIndex(state, state.cs_idx);
   FEXCore::Core::CPUState::SetGDTBase(cs, 0);
