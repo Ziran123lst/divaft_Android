@@ -199,8 +199,7 @@ static bool RunSelfTests() {
     MovRegImm64(c, 1, 0x4000);        // rcx = alignment
     MovRegImm64(c, 8, 0);             // r8 = memoryType
     MovRegImm64(c, 9, phys_out);      // r9 = physAddrOut
-    MovRaxImm64(c, alloc_veneer);
-    Emit(c, {0xFF, 0xD0});            // call rax（间接调用，callret_sp 已修）
+    EmitCallRel32(c, code_addr, alloc_veneer);  // 直接 call rel32（phase-2 验证过的形态）
     Emit(c, {0xF4});                  // hlt
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
