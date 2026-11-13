@@ -36,14 +36,20 @@ constexpr uint64_t kVeneerSpace = 1 * 1024 * 1024;
 constexpr size_t kVeneerSize = 32;
 constexpr size_t kGuestStack = 1 * 1024 * 1024;  // 每次 CallGuest 的私有 guest 栈
 
-// veneer：guest 调系统函数跳入此桩。采用 uncharted 形态：mov r10,rcx; mov eax,id; syscall; ret。
-// 第4参经 r10 传递（syscall 清 rcx）；低4G 下 FEX 保 r8/r9/r10，无需压栈。
+// veneer：guest 调系统函数跳入此桩。syscall 前把第4-6参（rcx→r10, r8, r9）压栈保存，
+// 因 FEX-qemu syscall 陷入会清 r8/r9/r10（实测）。HandleSyscall 从栈上读回。
+// 栈布局（syscall 时）：[rsp+0]=arg4 [rsp+8]=arg5 [rsp+16]=arg6 [rsp+24]=返回地址 [rsp+32..]=溢出参。
 static void EmitVeneer(uint8_t* p, uint32_t id) {
-  p[0] = 0x49; p[1] = 0x89; p[2] = 0xCA;  // mov r10, rcx
-  p[3] = 0xB8;                             // mov eax, id
-  std::memcpy(p + 4, &id, 4);
-  p[8] = 0x0F; p[9] = 0x05;               // syscall
-  p[10] = 0xC3;                            // ret
+  size_t i = 0;
+  p[i++] = 0x49; p[i++] = 0x89; p[i++] = 0xCA;  // mov r10, rcx（arg4）
+  p[i++] = 0x41; p[i++] = 0x51;                 // push r9（arg6）
+  p[i++] = 0x41; p[i++] = 0x50;                 // push r8（arg5）
+  p[i++] = 0x41; p[i++] = 0x52;                 // push r10（arg4）
+  p[i++] = 0xB8;                                 // mov eax, id
+  std::memcpy(p + i, &id, 4); i += 4;
+  p[i++] = 0x0F; p[i++] = 0x05;                 // syscall
+  p[i++] = 0x48; p[i++] = 0x83; p[i++] = 0xC4; p[i++] = 0x18;  // add rsp, 24
+  p[i++] = 0xC3;                                 // ret
 }
 
 #ifdef DIVAFT_WITH_FEX
@@ -110,15 +116,15 @@ public:
     // 诊断：读栈参前先打印函数名（定位读栈崩溃的函数）
     std::fprintf(stderr, "[sys] %s rsp=0x%llx\n", it->second.name.c_str(),
                  (unsigned long long)gregs[FEXCore::X86State::REG_RSP]);
-    // SysV 参数 RDI/RSI/RDX/RCX/R8/R9；veneer 已 mov r10,rcx（syscall 清 rcx），第4参从 R10 读。
+    // SysV 前3参 RDI/RSI/RDX（FEX 保住）；第4-6参由 veneer 压栈保存（FEX-qemu syscall 清 r8/r9/r10）。
     uint64_t int_args[14] = {
         gregs[FEXCore::X86State::REG_RDI], gregs[FEXCore::X86State::REG_RSI],
-        gregs[FEXCore::X86State::REG_RDX], gregs[FEXCore::X86State::REG_R10],
-        gregs[FEXCore::X86State::REG_R8],  gregs[FEXCore::X86State::REG_R9]};
+        gregs[FEXCore::X86State::REG_RDX], 0, 0, 0};
     const uint64_t rsp = gregs[FEXCore::X86State::REG_RSP];
     if (rsp) {
-      // 简单 veneer：[rsp]=返回地址，[rsp+8..]=第7+ 溢出参
-      std::memcpy(&int_args[6], reinterpret_cast<const void*>(rsp + 8), 8 * sizeof(uint64_t));
+      // veneer 栈布局：[rsp+0]=arg4 [rsp+8]=arg5 [rsp+16]=arg6 [rsp+24]=返回地址 [rsp+32..]=溢出参
+      std::memcpy(&int_args[3], reinterpret_cast<const void*>(rsp), 3 * sizeof(uint64_t));
+      std::memcpy(&int_args[6], reinterpret_cast<const void*>(rsp + 32), 8 * sizeof(uint64_t));
     }
     // 浮点参 XMM0..7 低 64 位（参照 uncharted：st.xmm.sse.data[i][0]）。
     double fp_args[8];
@@ -128,6 +134,8 @@ public:
     }
     HleReturn hret {};
     uint64_t ret = it->second.fn(int_args, 14, fp_args, &hret);
+    std::fprintf(stderr, "[sys-ret] %s a0=0x%llx -> 0x%llx\n", it->second.name.c_str(),
+                 (unsigned long long)int_args[0], (unsigned long long)ret);
     gregs[FEXCore::X86State::REG_RAX] = ret;
     if (hret.rdx_set) gregs[FEXCore::X86State::REG_RDX] = hret.rdx;
     if (hret.fp) {
