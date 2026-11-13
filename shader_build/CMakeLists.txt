@@ -60,3 +60,18 @@ target_include_directories(divaft_shader_recompiler PRIVATE
 target_link_libraries(divaft_shader_recompiler PRIVATE sirit fmt::fmt Zydis::Zydis)
 target_compile_options(divaft_shader_recompiler PRIVATE -Wno-everything)
 message(STATUS "shader_recompiler sources: ${SHADER_SRCS}")
+
+# 端到端验证：GCN shader → SPIR-V（shaders→Vulkan 核心管线实跑）
+add_executable(shader_translate_test "${CMAKE_CURRENT_SOURCE_DIR}/translate_test.cpp")
+target_link_libraries(shader_translate_test PRIVATE divaft_shader_recompiler)
+target_include_directories(shader_translate_test PRIVATE
+  "${SHADPS4}" "${SHADPS4}/src"
+  "${SHADPS4}/externals/sirit/include" "${SHADPS4}/externals/fmt/include"
+  "${SHADPS4}/externals/magic_enum/include" "${SHADPS4}/externals/half/include"
+  "${SHADPS4}/externals/robin-map/include" "${SHADPS4}/externals/ext-boost"
+  "${SHADPS4}/externals/gcn/include" "${SHADPS4}/externals/vulkan-headers/include"
+  "${SHADPS4}/externals/sirit/externals/SPIRV-Headers/include"
+  "${SHADPS4}/externals/spdlog/include" "${SHADPS4}/externals/json/include"
+  "${SHADPS4}/externals/xbyak"
+)
+target_compile_options(shader_translate_test PRIVATE -Wno-everything)

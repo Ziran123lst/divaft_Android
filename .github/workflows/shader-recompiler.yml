@@ -44,6 +44,13 @@ jobs:
       - name: Build shader_recompiler
         run: cmake --build build/shader -j4 2>&1 | tee /tmp/shader-build.log
 
+      - name: Run GCN->SPIR-V translate test under qemu-aarch64
+        run: |
+          sudo apt-get install -y qemu-user
+          qemu-aarch64 -L "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot" \
+            ./build/shader/shader_translate_test | tee /tmp/translate-test.log
+          grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
+
       - name: Upload shader_recompiler library
         if: always()
         uses: actions/upload-artifact@v4
@@ -51,4 +58,6 @@ jobs:
           name: divaft-shader-recompiler
           path: |
             build/shader/libdivaft_shader_recompiler.a
+            build/shader/shader_translate_test
             /tmp/shader-build.log
+            /tmp/translate-test.log
