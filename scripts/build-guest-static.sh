@@ -9,7 +9,7 @@ BUILD=${FEX_BUILD:-"$ROOT/build/fex-android"}
 cd "$BUILD"
 
 # 重编 divaft 的两个 harness TU（native TLS）
-for src in "$ROOT/runtime/guest_bridge.cpp" "$ROOT/runtime/diva_loader.cpp" "$ROOT/runtime/hle_wire.cpp" "$ROOT/runtime/guest_memory.cpp" "$ROOT/runtime/hle_kernel.cpp" "$ROOT/runtime/hle_libc.cpp" "$ROOT/runtime/hle_graphics.cpp" "$ROOT/runtime/hle_audio.cpp" "$ROOT/runtime/hle_pad.cpp" "$ROOT/runtime/audio_out.cpp" "$ROOT/runtime/input_pad.cpp" "$ROOT/runtime/diva_runtime.cpp" "$ROOT/runtime/diva_boot.cpp"; do
+for src in "$ROOT/runtime/guest_bridge.cpp" "$ROOT/runtime/diva_loader.cpp" "$ROOT/runtime/hle_wire.cpp" "$ROOT/runtime/guest_memory.cpp" "$ROOT/runtime/hle_kernel.cpp" "$ROOT/runtime/hle_libc.cpp" "$ROOT/runtime/hle_graphics.cpp" "$ROOT/runtime/pm4_parser.cpp" "$ROOT/runtime/hle_audio.cpp" "$ROOT/runtime/hle_pad.cpp" "$ROOT/runtime/audio_out.cpp" "$ROOT/runtime/input_pad.cpp" "$ROOT/runtime/diva_runtime.cpp" "$ROOT/runtime/diva_boot.cpp"; do
   OBJ_REL="CMakeFiles/fexcore-guest-harness.dir${src}.o"
   CMD=$(ninja -t commands "$OBJ_REL" | grep 'clang++' | head -1)
   [[ -n "$CMD" ]] || { echo "no compile cmd for $src" >&2; exit 1; }

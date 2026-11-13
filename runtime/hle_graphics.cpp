@@ -2,6 +2,7 @@
 // GnmDriver 整库记录型 stub（PM4 命令缓冲翻译待接 video_core）；VideoOut 接 IVideoBackend。
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "divaft/hle_graphics.h"
+#include "divaft/pm4_parser.h"
 
 #include <cstdio>
 #include <cstring>
@@ -23,6 +24,32 @@ size_t RegisterGraphicsHle(HleWire& wire, IVideoBackend* backend) {
         g_gnm_calls.fetch_add(1);
         return 0;  // ORBIS_OK
       });
+
+  // 命令提交：把 DCB（draw command buffer）喂给 PM4 解析器 → 渲染后端。
+  // sceGnmSubmitCommandBuffers(count, dcb_gpu_addrs, dcb_sizes, ccb_gpu_addrs, ccb_sizes)
+  auto submit = [backend](const uint64_t* a, unsigned) -> uint64_t {
+    uint32_t count = (uint32_t)a[0];
+    uint64_t dcb_addrs = a[1], dcb_sizes = a[2];
+    if (backend && dcb_addrs && dcb_sizes && count <= 16) {
+      const uint64_t* addrs = reinterpret_cast<const uint64_t*>(dcb_addrs);
+      const uint32_t* sizes = reinterpret_cast<const uint32_t*>(dcb_sizes);
+      for (uint32_t i = 0; i < count; ++i) {
+        if (!addrs[i] || sizes[i] < 4) continue;
+        const uint32_t* cmdbuf = reinterpret_cast<const uint32_t*>(addrs[i]);
+        backend->SubmitCommandBuffer(cmdbuf, sizes[i] / 4);
+        PM4Parser::Parse(cmdbuf, sizes[i] / 4, backend);
+      }
+    }
+    return 0;
+  };
+  auto regg = [&](const char* name, HleFn fn) {
+    if (wire.RegisterByName("libSceGnmDriver", name, std::move(fn))) {}
+  };
+  regg("sceGnmSubmitCommandBuffers", submit);
+  regg("sceGnmSubmitCommandBuffersForWorkload", submit);
+  regg("sceGnmSubmitAndFlipCommandBuffers", submit);
+  regg("sceGnmSubmitAndFlipCommandBuffersForWorkload", submit);
+  regg("sceGnmSubmitDone", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
 
   // ---- libSceVideoOut：显示输出，接渲染后端 ----
   auto regv = [&](const char* name, HleFn fn) {

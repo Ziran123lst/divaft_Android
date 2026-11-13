@@ -30,6 +30,10 @@ public:
   virtual void WaitVblank() = 0;
   // 提交 GnmDriver 命令缓冲（PM4 包）。后端翻译为 Vulkan 命令。
   virtual void SubmitCommandBuffer(const uint32_t* cmdbuf, size_t dwords) = 0;
+  // PM4 解析后的高层命令（阶段3 骨架；实际渲染待 Vulkan 接入）。
+  virtual void DrawIndex(uint32_t index_count, uint64_t index_base, uint32_t initiator) = 0;
+  virtual void Dispatch(uint32_t x, uint32_t y, uint32_t z) = 0;
+  virtual void SetRegister(uint32_t reg, uint32_t value, bool is_sh_reg) = 0;
   virtual const char* name() const = 0;
 };
 
@@ -42,12 +46,18 @@ public:
   void Flip(uint32_t, int64_t) override { ++flips_; }
   void WaitVblank() override {}
   void SubmitCommandBuffer(const uint32_t*, size_t) override { ++cmdbufs_; }
+  void DrawIndex(uint32_t, uint64_t, uint32_t) override { ++draws_; }
+  void Dispatch(uint32_t, uint32_t, uint32_t) override { ++dispatches_; }
+  void SetRegister(uint32_t, uint32_t, bool) override { ++reg_writes_; }
   const char* name() const override { return "null"; }
   uint64_t flips() const { return flips_; }
   uint64_t cmdbufs() const { return cmdbufs_; }
+  uint64_t draws() const { return draws_; }
+  uint64_t dispatches() const { return dispatches_; }
+  uint64_t reg_writes() const { return reg_writes_; }
 private:
   uint32_t w_ = 0, h_ = 0;
-  uint64_t flips_ = 0, cmdbufs_ = 0;
+  uint64_t flips_ = 0, cmdbufs_ = 0, draws_ = 0, dispatches_ = 0, reg_writes_ = 0;
 };
 
 }  // namespace divaft

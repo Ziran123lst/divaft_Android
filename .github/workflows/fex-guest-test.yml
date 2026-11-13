@@ -31,6 +31,8 @@ jobs:
           /tmp/tw runtime/data/contract.tsv
           $CXX runtime/test_hle_media.cpp runtime/hle_wire.cpp runtime/hle_graphics.cpp runtime/hle_audio.cpp runtime/hle_pad.cpp runtime/audio_out.cpp runtime/input_pad.cpp -o /tmp/tm -lpthread
           /tmp/tm runtime/data/contract.tsv
+          $CXX runtime/test_pm4.cpp runtime/pm4_parser.cpp -o /tmp/tp
+          /tmp/tp
           echo "HOST_HLE_TEST_PASS"
 
   fex-guest-test:
