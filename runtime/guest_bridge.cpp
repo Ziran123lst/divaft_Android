@@ -210,8 +210,11 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
                                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (stack == MAP_FAILED) return 0;
   const uint64_t stack_top = reinterpret_cast<uint64_t>(stack) + kGuestStack;
+  // 顶部留 4KB 白（参照 uncharted CallOutermost 用 stack_top-4096）：
+  // HandleSyscall 会读 [rsp+8..rsp+72] 栈参，rsp 贴栈顶会越界并扰动 guest 寄存器。
+  const uint64_t rsp_top = stack_top - 4096;
   // 返回蹦床 + 超过 6 个的栈参（参照 uncharted CallOutermost）。
-  uint64_t rsp = (stack_top & ~uint64_t(15)) - 8 * (count > 6 ? ((count - 6 + 1) & ~1u) : 0);
+  uint64_t rsp = (rsp_top & ~uint64_t(15)) - 8 * (count > 6 ? ((count - 6 + 1) & ~1u) : 0);
   for (unsigned i = 6; i < count; ++i)
     *reinterpret_cast<uint64_t*>(rsp + 8 * (i - 6)) = args[i];
   rsp -= 8;
