@@ -287,6 +287,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   cs->L = 1; cs->D = 0;
   state.cs_cached = FEXCore::Core::CPUState::CalculateGDTBase(*cs);
   state.mxcsr = 0x9fc0;  // PS4 默认 FTZ+DAZ
+  state.FCW = 0x037f;    // x87 FPU 控制字（对照 uncharted EnsureThread，libc 或用到 x87）
   if (impl_->tcb) { state.fs_cached = impl_->tcb; state.gs_cached = impl_->tcb; }  // TLS/TCB
   state.gregs[FEXCore::X86State::REG_RSP] = rsp;
   // SysV host→guest 参数：RDI/RSI/RDX/RCX/R8/R9。
