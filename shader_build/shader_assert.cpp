@@ -4,6 +4,7 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include <stdexcept>
+#include <cstdlib>
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 #define SHADER_CRASH() __asm__ __volatile__("brk 0")
