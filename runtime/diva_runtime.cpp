@@ -129,6 +129,16 @@ bool DivaRuntime::LoadLibc(const std::string& libc_path) {
   std::fprintf(stderr, "[diva] libc 模块基址=0x%llx 导出=%zu 映像=%.1fMB\n",
                (unsigned long long)libc_base_, lr.exports.size(), lr.image_size / 1048576.0);
   WireModuleToHle(lr, libc_base_);
+  // 调用 libc 的 PREINIT_ARRAY / INIT_ARRAY 初始化函数（rtld 职责），建立全局状态。
+  // 缺此步 libc 全局未初始化，snprintf 等会拿 null 崩溃。
+  for (uint64_t fn : lr.preinit_funcs) {
+    std::fprintf(stderr, "[diva] libc preinit @0x%llx\n", (unsigned long long)(libc_base_ + fn));
+    bridge_.CallGuest(libc_base_ + fn, nullptr, 0);
+  }
+  for (uint64_t fn : lr.init_funcs) {
+    std::fprintf(stderr, "[diva] libc init @0x%llx\n", (unsigned long long)(libc_base_ + fn));
+    bridge_.CallGuest(libc_base_ + fn, nullptr, 0);
+  }
   return true;
 }
 

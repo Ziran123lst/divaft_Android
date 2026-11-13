@@ -191,6 +191,21 @@ bool DivaLoader::Relocate(const std::vector<uint8_t>& file_data, size_t elf_offs
   };
   if (tags.count(kDtSceJmprel)) do_relocs(get(kDtSceJmprel), get(kDtScePltrelsz));
   if (tags.count(kDtSceRela)) do_relocs(get(kDtSceRela), get(kDtSceRelasz));
+
+  // 模块初始化函数数组（PREINIT_ARRAY / INIT_ARRAY / DT_INIT）：从映像读函数指针（vaddr）。
+  // rtld 加载模块后须调用，否则 libc 等全局状态未初始化。
+  auto read_fn_array = [&](uint64_t arr_tag, uint64_t sz_tag, std::vector<uint64_t>* dst) {
+    if (!tags.count(arr_tag)) return;
+    uint64_t arr = get(arr_tag), sz = tags.count(sz_tag) ? get(sz_tag) : 0;
+    for (uint64_t off = 0; off + 8 <= sz; off += 8) {
+      if (arr + off + 8 > out->image.size()) break;
+      uint64_t fn = ReadLE<uint64_t>(out->image.data() + arr + off);
+      if (fn) dst->push_back(fn);
+    }
+  };
+  read_fn_array(kDtPreInitArray, kDtPreInitArraySz, &out->preinit_funcs);
+  read_fn_array(kDtInitArray, kDtInitArraySz, &out->init_funcs);
+  if (tags.count(kDtInit) && get(kDtInit)) out->init_funcs.push_back(get(kDtInit));
   return true;
 }
 

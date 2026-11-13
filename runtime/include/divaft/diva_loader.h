@@ -34,6 +34,12 @@ constexpr uint64_t kDtSceStrtab = 0x61000035;
 constexpr uint64_t kDtSceStrsz = 0x61000037;
 constexpr uint64_t kDtSceSymtab = 0x61000039;
 constexpr uint64_t kDtSceSymtabsz = 0x6100003F;
+// 标准动态标签：模块初始化函数数组（rtld 加载后须调用，否则全局状态未初始化）
+constexpr uint64_t kDtInit = 0x0C;
+constexpr uint64_t kDtInitArray = 0x19;
+constexpr uint64_t kDtInitArraySz = 0x1B;
+constexpr uint64_t kDtPreInitArray = 0x20;
+constexpr uint64_t kDtPreInitArraySz = 0x21;
 
 struct Segment {
   uint32_t type;
@@ -72,6 +78,8 @@ struct LoadResult {
   std::vector<ImportSymbol> imports;
   std::vector<ExportSymbol> exports;  // 导出表（多模块交叉接线用）
   std::vector<RelativeReloc> relative_relocs;  // RELATIVE 重定位（映射时加基址）
+  std::vector<uint64_t> preinit_funcs;  // PREINIT_ARRAY 函数 vaddr（加载后须调用）
+  std::vector<uint64_t> init_funcs;     // INIT_ARRAY / DT_INIT 函数 vaddr
   size_t reloc_count = 0;
 };
 
