@@ -344,6 +344,13 @@ size_t RegisterKernelHle(HleWire& wire, GuestMemoryManager* mem, GuestBridge* br
     std::fprintf(stderr, "[kernel] DebugRaiseException code=0x%llx（libc 初始化报错，多为前置参数缺失）\n",
                  (unsigned long long)a[0]);
     return 0; });
+  // libc 经此把自身堆 API(malloc/free/...)注册给 libkernel（供 TLS 分配等回调）。存下指针即可。
+  regnid("p5EcQeEeJAE", "_sceKernelRtldSetApplicationHeapAPI", [](const uint64_t* a, unsigned) -> uint64_t {
+    static uint64_t heap_api = 0;
+    heap_api = a[0];
+    std::fprintf(stderr, "[kernel] RtldSetApplicationHeapAPI api=0x%llx\n", (unsigned long long)a[0]);
+    return 0; });
+  regnid("NWtTN10cJzE", "sceLibcHeapGetTraceInfo", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
 
   return n;
 }
