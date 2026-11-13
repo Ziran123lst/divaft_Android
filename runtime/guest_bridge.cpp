@@ -83,11 +83,11 @@ public:
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
     auto it = by_id_->find(id);
     if (it == by_id_->end()) return 0;
-    // SysV 函数 ABI 参数在 gregs（RDI/RSI/RDX/RCX/R8/R9）；Args->Argument 是 Linux
-    // syscall ABI 布局，不适用 veneer 函数调用，故从 gregs 读。
+    // SysV 函数参数 RDI/RSI/RDX/RCX/R8/R9；但 veneer 在 syscall 前 mov r10,rcx，
+    // 因 syscall 指令会清 RCX（存返回 RIP）。故第 4 参从 R10 读（syscall ABI）。
     const uint64_t int_args[6] = {
         gregs[FEXCore::X86State::REG_RDI], gregs[FEXCore::X86State::REG_RSI],
-        gregs[FEXCore::X86State::REG_RDX], gregs[FEXCore::X86State::REG_RCX],
+        gregs[FEXCore::X86State::REG_RDX], gregs[FEXCore::X86State::REG_R10],
         gregs[FEXCore::X86State::REG_R8],  gregs[FEXCore::X86State::REG_R9]};
     uint64_t ret = it->second.fn(int_args, 6, nullptr);
     gregs[FEXCore::X86State::REG_RAX] = ret;
