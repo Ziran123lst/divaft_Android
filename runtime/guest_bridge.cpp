@@ -108,6 +108,9 @@ public:
                          FEXCore::HLE::SyscallArguments* Args) override {
     auto& gregs = Frame->State.gregs;
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
+    std::fprintf(stderr, "[sys-entry] id=%u rsp=0x%llx rip=0x%llx\n", id,
+                 (unsigned long long)gregs[FEXCore::X86State::REG_RSP],
+                 (unsigned long long)Frame->State.rip);
     auto it = by_id_->find(id);
     if (it == by_id_->end()) return 0;
     // 诊断：读栈参前先打印函数名（定位读栈崩溃的函数）
