@@ -29,10 +29,27 @@ bool DivaRuntime::MapImage(const LoadResult& lr) {
   const uint64_t page = static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
   image_aligned_ = (lr.image_size + page - 1) & ~(page - 1);
   region_size_ = image_aligned_ + kExtra;
-  void* p = mmap(nullptr, region_size_, PROT_READ | PROT_WRITE | PROT_EXEC,
-                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  // 优先低 4G 映射：FEX-qemu 对 r8-r15 的高地址 64 位指针截断成 32 位，
+  // guest 区域落在低 4G 则指针天然 32 位可表示，规避截断（M3 当初即 low4g 验证）。
+  // 低地址须避开静态二进制装载段（约 0x200000-0x59a000）。MAP_FIXED_NOREPLACE 不覆盖已映射区。
+  void* p = MAP_FAILED;
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+  const uint64_t low_base = 0x10000000;  // 256MB
+  if (low_base + region_size_ < 0x100000000ULL) {
+    p = mmap(reinterpret_cast<void*>(low_base), region_size_, PROT_READ | PROT_WRITE | PROT_EXEC,
+             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+  }
+  if (p == MAP_FAILED) {
+    p = mmap(nullptr, region_size_, PROT_READ | PROT_WRITE | PROT_EXEC,
+             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  }
   if (p == MAP_FAILED) { std::perror("mmap image"); return false; }
   guest_base_ = reinterpret_cast<uint64_t>(p);
+  std::fprintf(stderr, "[diva] guest 区域基址=0x%llx（%s）\n",
+               (unsigned long long)guest_base_,
+               guest_base_ < 0x100000000ULL ? "低4G" : "高地址");
   std::memcpy(p, lr.image.data(), lr.image.size());
   return true;
 }

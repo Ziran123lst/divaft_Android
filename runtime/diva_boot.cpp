@@ -106,15 +106,23 @@ static bool RunSelfTests() {
   setvbuf(stdout, nullptr, _IONBF, 0);
   setvbuf(stderr, nullptr, _IONBF, 0);
   std::fprintf(stderr, "[divaft-guest] main started\n");
-  // 不用 MAP_FIXED 低地址：8MB@0x10000 会覆盖静态二进制自身装载段导致 SIGILL。
-  // 让 OS 选安全地址，4MB 区域（代码+栈+1MB veneer）。
+  // 4MB 区域（代码+栈+1MB veneer）。优先低 4G 映射（规避 FEX-qemu 对 r8-r15 高地址指针截断）；
+  // 低地址避开静态二进制装载段（约 0x200000-0x59a000），用 MAP_FIXED_NOREPLACE 安全尝试、失败回退。
   constexpr uint64_t kRegion = 4 * 1024 * 1024;
-  void* region = mmap(nullptr, kRegion, PROT_READ | PROT_WRITE | PROT_EXEC,
-                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+  void* region = mmap(reinterpret_cast<void*>(0x1000000ULL), kRegion,
+                      PROT_READ | PROT_WRITE | PROT_EXEC,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+  if (region == MAP_FAILED) {
+    region = mmap(nullptr, kRegion, PROT_READ | PROT_WRITE | PROT_EXEC,
+                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  }
   if (region == MAP_FAILED) { std::perror("mmap"); return false; }
   const uint64_t base = reinterpret_cast<uint64_t>(region);
-  std::fprintf(stderr, "[divaft-guest] mmap ok base=0x%llx, calling Init\n",
-               (unsigned long long)base);
+  std::fprintf(stderr, "[divaft-guest] mmap ok base=0x%llx (%s), calling Init\n",
+               (unsigned long long)base, base < 0x100000000ULL ? "低4G" : "高地址");
 
   divaft::GuestBridge bridge;
   if (!bridge.Init(base, kRegion)) {
