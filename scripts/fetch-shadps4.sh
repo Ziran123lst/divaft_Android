@@ -29,6 +29,10 @@ SUBMODULES=(
   externals/json
   externals/xbyak
 )
+# Zydis（x86 解码器，SRT pass 用；可移植，ARM64 可编）含嵌套 Zycore，recursive。
+echo "=== submodule externals/zydis (recursive) ==="
+git -C "$DEST" submodule update --init --recursive --depth 1 externals/zydis || \
+  echo "warn: zydis 子模块初始化失败"
 for sm in "${SUBMODULES[@]}"; do
   echo "=== submodule $sm ==="
   git -C "$DEST" submodule update --init --depth 1 "$sm" || \

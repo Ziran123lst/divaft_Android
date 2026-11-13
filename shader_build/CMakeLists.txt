@@ -16,6 +16,9 @@ endif()
 set(SIRIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${SHADPS4}/externals/sirit" "${CMAKE_BINARY_DIR}/sirit" EXCLUDE_FROM_ALL)
 add_subdirectory("${SHADPS4}/externals/fmt" "${CMAKE_BINARY_DIR}/fmt" EXCLUDE_FROM_ALL)
+set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory("${SHADPS4}/externals/zydis" "${CMAKE_BINARY_DIR}/zydis" EXCLUDE_FROM_ALL)
 
 # ---- shader_recompiler 源 ----
 file(GLOB_RECURSE SHADER_SRCS CONFIGURE_DEPENDS "${SHADPS4}/src/shader_recompiler/*.cpp")
@@ -29,6 +32,7 @@ set(DEP_SRCS
   "${SHADPS4}/src/common/native_clock.cpp"
   "${SHADPS4}/src/common/rdtsc.cpp"
   "${SHADPS4}/src/common/error.cpp"
+  "${SHADPS4}/src/common/decoder.cpp"
   "${SHADPS4}/src/common/logging/log.cpp"
   "${SHADPS4}/src/common/logging/classes.cpp"
   "${SHADPS4}/src/video_core/amdgpu/pixel_format.cpp"
@@ -53,6 +57,6 @@ target_include_directories(divaft_shader_recompiler PRIVATE
   "${SHADPS4}/externals/json/include"
   "${SHADPS4}/externals/xbyak"
 )
-target_link_libraries(divaft_shader_recompiler PRIVATE sirit fmt::fmt)
+target_link_libraries(divaft_shader_recompiler PRIVATE sirit fmt::fmt Zydis::Zydis)
 target_compile_options(divaft_shader_recompiler PRIVATE -Wno-everything)
 message(STATUS "shader_recompiler sources: ${SHADER_SRCS}")
