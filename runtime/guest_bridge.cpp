@@ -12,6 +12,7 @@
 #include "divaft/guest_bridge.h"
 
 #include <cstring>
+#include <atomic>
 #include <sys/mman.h>
 
 #ifdef DIVAFT_WITH_FEX
@@ -237,9 +238,16 @@ uint64_t GuestBridge::DispatchSyscall(uint32_t veneer_id, const uint64_t* sysv_a
 uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned count) {
 #ifdef DIVAFT_WITH_FEX
   if (!impl_->initialized || !impl_->ctx) return 0;
-  // per-call 私有 guest 栈：并发 guest 线程互不干扰（pthread_create 前提）。
-  uint8_t* stack = static_cast<uint8_t*>(mmap(nullptr, kGuestStack, PROT_READ | PROT_WRITE,
-                                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  // per-call 私有 guest 栈：低 4G（规避 FEX-qemu 高地址指针截断），并发各用独立栈。
+  static std::atomic<uint64_t> stack_cursor{0x60000000};
+  uint64_t sbase = stack_cursor.fetch_add(kGuestStack);
+  uint8_t* stack = static_cast<uint8_t*>(mmap(reinterpret_cast<void*>(sbase), kGuestStack,
+                                              PROT_READ | PROT_WRITE,
+                                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0));
+  if (stack == MAP_FAILED) {
+    stack = static_cast<uint8_t*>(mmap(nullptr, kGuestStack, PROT_READ | PROT_WRITE,
+                                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  }
   if (stack == MAP_FAILED) return 0;
   const uint64_t stack_top = reinterpret_cast<uint64_t>(stack) + kGuestStack;
   // 顶部留 4KB 白：HandleSyscall 读 [rsp+8..rsp+72] 栈参不越界。
