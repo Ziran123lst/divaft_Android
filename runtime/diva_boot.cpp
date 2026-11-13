@@ -171,6 +171,9 @@ static bool RunSelfTests() {
         [&mem](const uint64_t* a, unsigned, const double*) -> uint64_t {
           uint64_t phys = 0;
           int r = mem.AllocateDirect(a[2], a[3], &phys);
+          std::fprintf(stderr, "[mem_hle] len=%llx align=%llx a5=%llx phys=%llx r=%d\n",
+                       (unsigned long long)a[2], (unsigned long long)a[3],
+                       (unsigned long long)a[5], (unsigned long long)phys, r);
           if (r == 0 && a[5]) *reinterpret_cast<uint64_t*>(a[5]) = phys;
           return static_cast<uint64_t>(r);
         });
