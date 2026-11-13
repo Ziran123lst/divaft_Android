@@ -2,12 +2,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "divaft/diva_runtime.h"
 #include "divaft/hle_kernel.h"
+#include "divaft/hle_libc.h"
 
 #include <cstdio>
 #include <cstring>
 #include <sys/mman.h>
+#include <unistd.h>
 
 namespace divaft {
+
+namespace {
+constexpr uint64_t kMB = 1024 * 1024;
+// 区域布局：映像 + 直接内存 24MB + libc 堆 64MB + 顶部 2MB（栈+veneer）+ 余量。
+constexpr uint64_t kDirectMem = 24 * kMB;
+constexpr uint64_t kLibcHeap = 64 * kMB;
+constexpr uint64_t kExtra = 96 * kMB;
+}  // namespace
 
 DivaRuntime::DivaRuntime() = default;
 DivaRuntime::~DivaRuntime() {
@@ -15,8 +25,10 @@ DivaRuntime::~DivaRuntime() {
 }
 
 bool DivaRuntime::MapImage(const LoadResult& lr) {
-  // 区域 = 映像 + 32MB（直接内存堆 24MB + veneer 1MB + 栈 + 余量）。OS 选地址。
-  region_size_ = lr.image_size + 32 * 1024 * 1024;
+  // 映像大小向上取整到页：veneer/栈用 MAP_FIXED，必须页对齐，否则 EINVAL。
+  const uint64_t page = static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
+  image_aligned_ = (lr.image_size + page - 1) & ~(page - 1);
+  region_size_ = image_aligned_ + kExtra;
   void* p = mmap(nullptr, region_size_, PROT_READ | PROT_WRITE | PROT_EXEC,
                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (p == MAP_FAILED) { std::perror("mmap image"); return false; }
@@ -30,25 +42,21 @@ void DivaRuntime::WireImports(const LoadResult& lr) {
   resolved_count_ = 0;
   for (const auto& im : lr.imports) {
     const HleBinding* b = hle_.Resolve(im.nid);
-    HleFn fn;
+    HostFn fn;
     std::string name;
     if (b) {
       fn = b->fn;
       name = b->name;
       ++resolved_count_;
     } else {
-      // 记录型 stub：打印调用、返回 0（ORBIS_OK）。便于观察启动序列。
-      name = im.nid;
-      fn = [name](const uint64_t*, unsigned) -> uint64_t {
+      // 记录型 stub：打印函数名、返回 0（ORBIS_OK）。便于观察启动序列。
+      name = hle_.ContractName(im.nid);
+      fn = [name](const uint64_t*, unsigned, const double*, HleReturn*) -> uint64_t {
         std::fprintf(stderr, "[hle-stub] %s\n", name.c_str());
         return 0;
       };
     }
-    // HleFn(2参) 适配为 GuestBridge HostFn(3参)
-    uint64_t veneer = bridge_.ExposeHost(name,
-        [fn](const uint64_t* args, unsigned count, const double*) -> uint64_t {
-          return fn(args, count);
-        });
+    uint64_t veneer = bridge_.ExposeHost(name, std::move(fn));
     // 把 veneer 地址写入导入的重定位目标（guest 地址 = base + reloc_target）
     uint64_t target = guest_base_ + im.reloc_target;
     std::memcpy(reinterpret_cast<void*>(target), &veneer, 8);
@@ -69,10 +77,20 @@ bool DivaRuntime::Init(const std::string& eboot_path, const std::string& contrac
     std::fprintf(stderr, "[diva] bridge init failed\n");
     return false;
   }
-  // 直接内存堆：映像之后 24MB。注册 libkernel 内存/时间 HLE。
-  mem_.Init(guest_base_ + lr.image_size, 24 * 1024 * 1024);
-  RegisterKernelHle(hle_, &mem_);
-  if (!contract_path.empty()) hle_.LoadContract(contract_path);
+  // 直接内存堆：映像(页对齐)之后 24MB。libc 堆：再之后 64MB（guest 地址）。
+  mem_.Init(guest_base_ + image_aligned_, kDirectMem);
+  heap_.Init(guest_base_ + image_aligned_ + kDirectMem, kLibcHeap);
+
+  // 契约须先加载：kernel/libc HLE 均按名反查 NID 注册。
+  if (!contract_path.empty()) {
+    if (!hle_.LoadContract(contract_path))
+      std::fprintf(stderr, "[diva] 警告：契约加载失败 %s（stub 将显示 NID）\n", contract_path.c_str());
+  }
+  size_t nk = RegisterKernelHle(hle_, &mem_, &bridge_);
+  size_t nl = RegisterLibcHle(hle_, &heap_);
+  std::fprintf(stderr, "[diva] HLE 注册：kernel=%zu libc=%zu（契约 %zu 条）\n",
+               nk, nl, hle_.contract_size());
+
   entry_ = guest_base_ + lr.entry;
   WireImports(lr);
   std::fprintf(stderr, "[diva] wired imports %zu/%zu (real HLE / total)\n",

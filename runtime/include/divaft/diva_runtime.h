@@ -1,5 +1,6 @@
 // divaft_Android — DIVA 运行时（原创）
-// 集成 DivaLoader + GuestBridge + HleWire：加载 eboot、把导入解析到 veneer、启动执行。
+// 集成 DivaLoader + GuestBridge + HleWire + GuestHeap：
+// 加载 eboot、把导入解析到 veneer、提供 libc/kernel HLE、启动执行。
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
@@ -19,7 +20,7 @@ public:
   ~DivaRuntime();
 
   // 加载 eboot 并接线导入。contract_path 为 HLE 契约（TSV）。
-  // 未注册实现的 NID 用记录型 stub（打印调用、返回 0），便于观察启动序列。
+  // 未注册实现的 NID 用记录型 stub（打印函数名、返回 0），便于观察启动序列。
   bool Init(const std::string& eboot_path, const std::string& contract_path);
 
   // 从 eboot 入口开始执行 guest 代码。
@@ -36,9 +37,11 @@ private:
 
   GuestBridge bridge_;
   HleWire hle_;
-  GuestMemoryManager mem_;
+  GuestMemoryManager mem_;   // libkernel 直接内存
+  GuestHeap heap_;           // libc malloc/free（guest 地址）
   uint64_t guest_base_ = 0;
   uint64_t region_size_ = 0;
+  uint64_t image_aligned_ = 0;  // 映像大小向上取整到页（区域布局用）
   uint64_t entry_ = 0;
   size_t import_count_ = 0;
   size_t resolved_count_ = 0;
