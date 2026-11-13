@@ -375,6 +375,43 @@ static bool RunSelfTests() {
                 "many_call", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
+  // 堆交互复现：veneer 用 GuestHeap.Malloc 返回堆指针（同启动 operator new），多次调用。
+  {
+    ++total;
+    static divaft::GuestHeap heap;
+    heap.Init(base + 0x200000, 0x100000);  // 1MB 堆
+    uint64_t heap_veneer = bridge.ExposeHost("heap_alloc",
+        [](const uint64_t* a, unsigned, const double*, divaft::HleReturn*) -> uint64_t {
+          return heap.Malloc(a[0]);
+        });
+    uint64_t got_addr = base + 0x19000;
+    uint64_t plt_addr = base + 0x1a000;
+    uint64_t code_addr = base + 0x1b000;
+    *reinterpret_cast<uint64_t*>(got_addr) = heap_veneer;
+    {
+      uint8_t plt[6] = {0xFF, 0x25, 0, 0, 0, 0};
+      int32_t disp = static_cast<int32_t>(got_addr - (plt_addr + 6));
+      std::memcpy(plt + 2, &disp, 4);
+      std::memcpy(reinterpret_cast<void*>(plt_addr), plt, 6);
+    }
+    std::vector<uint8_t> c;
+    for (int i = 0; i < 3; ++i) {
+      MovRegImm64(c, 7, 0x70);             // rdi = size 0x70（同启动）
+      size_t call_off = c.size();
+      c.push_back(0xE8);                    // call plt
+      int32_t rel = static_cast<int32_t>(plt_addr - (code_addr + call_off + 5));
+      for (int b = 0; b < 4; ++b) c.push_back((rel >> (b * 8)) & 0xFF);
+      Emit(c, {0x48, 0xC7, 0x00, 0x42, 0x00, 0x00, 0x00});  // mov qword [rax], 0x42（写堆指针）
+    }
+    Emit(c, {0xF4});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = (got != 0);  // 最后一次 malloc 返回非空
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (last_ptr=0x%llx)\n",
+                "heap_call", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
