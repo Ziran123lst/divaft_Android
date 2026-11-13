@@ -186,17 +186,22 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   std::memset(impl_->veneer_space, 0, kVeneerSize);
   impl_->veneer_space[0] = 0xF4;  // hlt
 
-  // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted）。
-  // 低 4G 固定页，[tcb+0]=自身指针（x86-64 TLS 自指约定）。
+  // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted/shadPS4）。
+  // shadPS4 Tcb 布局：[0]=self [8]=dtv [16]=thread [24/32]=spare [40]=canary [48]=fiber。
+  // 低 4G 页；首选地址被占（如自检 bridge 未释放）则顺延，避免静默失败致 fs/gs=0。
   {
-    const uint64_t tcb_addr = 0x48000000;
-    void* tp = mmap(reinterpret_cast<void*>(tcb_addr), 4096, PROT_READ | PROT_WRITE,
-                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-    if (tp != MAP_FAILED) {
-      impl_->tcb = tcb_addr;
-      std::memset(tp, 0, 4096);
-      *reinterpret_cast<uint64_t*>(tcb_addr) = tcb_addr;  // 自指
+    for (uint64_t tcb_addr = 0x48000000; tcb_addr < 0x49000000; tcb_addr += 4096) {
+      void* tp = mmap(reinterpret_cast<void*>(tcb_addr), 4096, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+      if (tp != MAP_FAILED) {
+        impl_->tcb = tcb_addr;
+        std::memset(tp, 0, 4096);
+        *reinterpret_cast<uint64_t*>(tcb_addr + 0) = tcb_addr;       // tcb_self
+        *reinterpret_cast<uint64_t*>(tcb_addr + 40) = 0x9e3779b97f4a7c15ULL;  // tcb_canary
+        break;
+      }
     }
+    if (!impl_->tcb) std::fprintf(stderr, "[bridge] 警告：TCB 分配失败，fs/gs 将为 0\n");
   }
 
 #ifdef DIVAFT_WITH_FEX
@@ -316,6 +321,10 @@ void GuestBridge::Shutdown() {
   if (impl_->veneer_space) {
     munmap(impl_->veneer_space, kVeneerSpace);
     impl_->veneer_space = nullptr;
+  }
+  if (impl_->tcb) {
+    munmap(reinterpret_cast<void*>(impl_->tcb), 4096);
+    impl_->tcb = 0;
   }
 #ifdef DIVAFT_WITH_FEX
   impl_->ctx.reset();
