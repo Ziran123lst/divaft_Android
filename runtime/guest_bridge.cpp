@@ -177,7 +177,6 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   std::memset(impl_->veneer_space, 0, kVeneerSize);
   impl_->veneer_space[0] = 0xF4;                 // hlt（返回蹦床）
   impl_->veneer_space[16] = 0x0F; impl_->veneer_space[17] = 0x3E;  // CALLBACKRET
-  impl_->signals.callback_return = vbase + 16;
 
   // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted/shadPS4）。
   // shadPS4 Tcb 布局：[0]=self [8]=dtv [16]=thread [24/32]=spare [40]=canary [48]=fiber。
@@ -210,6 +209,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   impl_->ctx = FEXCore::Context::Context::CreateNewContext(features);
   if (!impl_->ctx) return false;
   impl_->syscalls = fextl::make_unique<VeneerSyscallHandler>(&impl_->by_id, guest_base, guest_size);
+  impl_->signals.callback_return = impl_->exit_hlt + 16;
   impl_->ctx->SetSignalDelegator(&impl_->signals);
   impl_->ctx->SetSyscallHandler(impl_->syscalls.get());
   impl_->ctx->EnableExitOnHLT();  // HLT 干净退出 ExecuteThread（弃用 siglongjmp，参照 uncharted）
