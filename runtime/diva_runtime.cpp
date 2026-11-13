@@ -8,6 +8,7 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <atomic>
 
 namespace divaft {
 
@@ -57,23 +58,30 @@ bool DivaRuntime::MapImage(const LoadResult& lr) {
 void DivaRuntime::WireImports(const LoadResult& lr) {
   import_count_ = lr.imports.size();
   resolved_count_ = 0;
+  static std::atomic<int> trace_n{0};
   for (const auto& im : lr.imports) {
     const HleBinding* b = hle_.Resolve(im.nid);
     HostFn fn;
     std::string name;
+    bool is_stub = false;
     if (b) {
       fn = b->fn;
       name = b->name;
       ++resolved_count_;
     } else {
-      // 记录型 stub：打印函数名、返回 0（ORBIS_OK）。便于观察启动序列。
+      // 记录型 stub：返回 0（ORBIS_OK）。调用由下方追踪器统一打印。
       name = hle_.ContractName(im.nid);
-      fn = [name](const uint64_t*, unsigned, const double*, HleReturn*) -> uint64_t {
-        std::fprintf(stderr, "[hle-stub] %s\n", name.c_str());
-        return 0;
-      };
+      is_stub = true;
+      fn = [](const uint64_t*, unsigned, const double*, HleReturn*) -> uint64_t { return 0; };
     }
-    uint64_t veneer = bridge_.ExposeHost(name, std::move(fn));
+    // 追踪前 600 次 HLE 调用（含真 HLE），定位启动停点。
+    HostFn traced = [name, fn, is_stub](const uint64_t* a, unsigned c, const double* fp,
+                                        HleReturn* ret) -> uint64_t {
+      int n = trace_n.fetch_add(1);
+      if (n < 600) std::fprintf(stderr, "[hle %d] %s%s\n", n, name.c_str(), is_stub ? " (stub)" : "");
+      return fn(a, c, fp, ret);
+    };
+    uint64_t veneer = bridge_.ExposeHost(name, std::move(traced));
     // 把 veneer 地址写入导入的重定位目标（guest 地址 = base + reloc_target）
     uint64_t target = guest_base_ + im.reloc_target;
     std::memcpy(reinterpret_cast<void*>(target), &veneer, 8);
