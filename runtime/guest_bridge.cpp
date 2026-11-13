@@ -257,6 +257,13 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     state.callret_sp = reinterpret_cast<uint64_t>(cr_alloc + page) + cr_size / 4;
   }
   t_active_thread = thread;
+  // 临时诊断：dump 入口代码字节，确认 guest 代码在内存中正确
+  {
+    const uint8_t* cp = reinterpret_cast<const uint8_t*>(entry);
+    char buf[256]; int off = 0;
+    for (int i = 0; i < 80 && off < 240; ++i) off += std::snprintf(buf+off, 240-off, "%02x ", cp[i]);
+    std::fprintf(stderr, "[code-diag] entry=%llx bytes: %s\n", (unsigned long long)entry, buf);
+  }
   uint64_t ret = 0;
   if (sigsetjmp(t_exit_jmp, 1) == 0) {
     impl_->ctx->ExecuteThread(thread);
