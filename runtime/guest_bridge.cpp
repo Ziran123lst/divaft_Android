@@ -90,14 +90,11 @@ public:
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
     auto it = by_id_->find(id);
     if (it == by_id_->end()) return 0;
-    // 临时诊断：syscall 入口原始寄存器（定位 mem_hle R9/R10 清零）
-    std::fprintf(stderr, "[sys-diag] id=%u rip=%llx rcx=%llx r8=%llx r9=%llx r10=%llx rsp=%llx\n",
-                 id, (unsigned long long)Frame->State.rip,
-                 (unsigned long long)gregs[FEXCore::X86State::REG_RCX],
-                 (unsigned long long)gregs[FEXCore::X86State::REG_R8],
-                 (unsigned long long)gregs[FEXCore::X86State::REG_R9],
-                 (unsigned long long)gregs[FEXCore::X86State::REG_R10],
-                 (unsigned long long)gregs[FEXCore::X86State::REG_RSP]);
+    // 临时诊断：syscall 入口全部通用寄存器（定位 mem_hle rcx/r8/r9 丢失）
+    std::fprintf(stderr, "[sys-diag] id=%u rip=%llx rsp=%llx\n", id,
+                 (unsigned long long)Frame->State.rip, (unsigned long long)gregs[FEXCore::X86State::REG_RSP]);
+    for (int r = 0; r < 16; ++r)
+      std::fprintf(stderr, "[sys-diag]   greg[%d]=%llx\n", r, (unsigned long long)gregs[r]);
     // SysV 函数参数 RDI/RSI/RDX/RCX/R8/R9；veneer 在 syscall 前 mov r10,rcx，
     // 因 syscall 清 RCX（存返回 RIP），故第 4 参从 R10 读（syscall ABI）。
     uint64_t int_args[14] = {
