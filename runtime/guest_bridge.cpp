@@ -67,9 +67,12 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
     if (rip && reinterpret_cast<const uint8_t*>(rip)[0] == kHlt) {
       siglongjmp(t_exit_jmp, 1);
     }
-    // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / rip 处字节。
-    std::fprintf(stderr, "[guest-crash] sig=%d rip=0x%llx faultaddr=%llx bytes:",
-                 sig, (unsigned long long)rip, (unsigned long long)info->si_addr);
+    // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / RSP / RBP / rip 处字节。
+    auto& gregs = thread->CurrentFrame->State.gregs;
+    std::fprintf(stderr, "[guest-crash] sig=%d rip=0x%llx faultaddr=%llx rsp=0x%llx rbp=0x%llx bytes:",
+                 sig, (unsigned long long)rip, (unsigned long long)info->si_addr,
+                 (unsigned long long)gregs[FEXCore::X86State::REG_RSP],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_RBP]);
     if (rip) {
       for (int i = 0; i < 8; ++i)
         std::fprintf(stderr, " %02x", reinterpret_cast<const uint8_t*>(rip)[i]);
@@ -289,6 +292,9 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     state.callret_sp = reinterpret_cast<uint64_t>(cr_alloc + page) + cr_size / 4;
   }
   t_active_thread = thread;
+  std::fprintf(stderr, "[callguest] entry=0x%llx rsp=0x%llx stackbase=0x%llx tcb=0x%llx\n",
+               (unsigned long long)entry, (unsigned long long)rsp,
+               (unsigned long long)reinterpret_cast<uint64_t>(stack), (unsigned long long)impl_->tcb);
   uint64_t ret = 0;
   if (sigsetjmp(t_exit_jmp, 1) == 0) {
     impl_->ctx->ExecuteThread(thread);
