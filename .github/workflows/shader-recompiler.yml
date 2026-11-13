@@ -1,0 +1,54 @@
+name: Shader recompiler cross-compile
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "shader_build/**"
+      - "scripts/fetch-shadps4.sh"
+      - ".github/workflows/shader-recompiler.yml"
+  workflow_dispatch:
+
+env:
+  NDK_VERSION: "30.0.16248370"
+
+jobs:
+  shader-recompiler:
+    name: Cross-compile shader_recompiler (GCN->SPIR-V) for arm64-v8a
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install NDK, cmake, ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          SDK=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "ndk;${{ env.NDK_VERSION }}"
+          echo "ANDROID_NDK_ROOT=$SDK/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+
+      - name: Fetch shadPS4 + externals
+        run: bash scripts/fetch-shadps4.sh
+
+      - name: Configure shader_recompiler (NDK arm64-v8a)
+        run: |
+          cmake -S shader_build -B build/shader -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 -DANDROID_STL=c++_shared \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build shader_recompiler
+        run: cmake --build build/shader -j4 2>&1 | tee /tmp/shader-build.log
+
+      - name: Upload shader_recompiler library
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: divaft-shader-recompiler
+          path: |
+            build/shader/libdivaft_shader_recompiler.a
+            /tmp/shader-build.log
