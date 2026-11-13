@@ -68,6 +68,12 @@ struct RelativeReloc {
   uint64_t addend;   // 需加基址的值
 };
 
+// SELF 段表条目（blocked 段）：phdr_id → SELF 文件内绝对偏移。
+struct SelfSegInfo {
+  uint32_t phdr_id;
+  uint64_t file_offset;
+};
+
 struct LoadResult {
   bool ok = false;
   std::string error;
@@ -97,7 +103,8 @@ private:
   // SELF 剥离：定位内嵌 ELF，校验未加密未压缩。
   bool UnwrapSelf(const std::vector<uint8_t>& data, size_t* elf_offset, std::string* err);
   bool ParseElf(const std::vector<uint8_t>& data, size_t elf_offset,
-                uint64_t guest_base, LoadResult* out, std::string* err);
+                uint64_t guest_base, LoadResult* out, std::string* err,
+                const std::vector<SelfSegInfo>* self_segs = nullptr);
   bool Relocate(const std::vector<uint8_t>& file_data, size_t elf_offset,
                 const std::vector<uint8_t>& dynlibdata, LoadResult* out, std::string* err);
 };

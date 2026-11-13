@@ -68,7 +68,8 @@ bool DivaLoader::UnwrapSelf(const std::vector<uint8_t>& data, size_t* elf_offset
 }
 
 bool DivaLoader::ParseElf(const std::vector<uint8_t>& data, size_t elf_offset,
-                          uint64_t guest_base, LoadResult* out, std::string* err) {
+                          uint64_t guest_base, LoadResult* out, std::string* err,
+                          const std::vector<SelfSegInfo>* self_segs) {
   const uint8_t* e = data.data() + elf_offset;
   size_t remain = data.size() - elf_offset;
   if (remain < 64 || e[4] != 2) { *err = "not ELF64"; return false; }
@@ -78,6 +79,7 @@ bool DivaLoader::ParseElf(const std::vector<uint8_t>& data, size_t elf_offset,
   uint16_t phentsize = ReadLE<uint16_t>(e + 54);
   uint16_t phnum = ReadLE<uint16_t>(e + 56);
 
+  std::vector<uint64_t> orig_off, orig_sz;  // ELF 相对偏移（SELF 重映射的参照）
   for (int i = 0; i < phnum; ++i) {
     size_t off = phoff + i * phentsize;
     if (off + 56 > remain) break;
@@ -89,10 +91,27 @@ bool DivaLoader::ParseElf(const std::vector<uint8_t>& data, size_t elf_offset,
     s.filesz = ReadLE<uint64_t>(e + off + 32);
     s.memsz = ReadLE<uint64_t>(e + off + 40);
     out->segments.push_back(s);
+    orig_off.push_back(s.offset);
+    orig_sz.push_back(s.filesz);
     if (s.type == kPtSceProcparam) out->proc_param_vaddr = s.vaddr;
   }
 
-  // 构建映像：PT_LOAD + PT_SCE_RELRO
+  // SELF：把每段 ELF 相对偏移重映射为 SELF 绝对偏移。
+  // 对段 i，找包含其偏移的 blocked SELF 段（按对应 phdr 的范围），offset = seg.file_offset + (off - phdr.off)。
+  if (self_segs) {
+    for (auto& s : out->segments) {
+      for (const auto& ss : *self_segs) {
+        if (ss.phdr_id >= orig_off.size()) continue;
+        uint64_t po = orig_off[ss.phdr_id], ps = orig_sz[ss.phdr_id];
+        if (s.offset >= po && s.offset < po + ps) {
+          s.offset = ss.file_offset + (s.offset - po);
+          break;
+        }
+      }
+    }
+  }
+
+  // 构建映像：PT_LOAD + PT_SCE_RELRO（s.offset 已为绝对文件偏移）
   uint64_t max_va = 0;
   for (const auto& s : out->segments)
     if (s.type == kPtLoad || s.type == kPtSceRelro)
@@ -101,11 +120,11 @@ bool DivaLoader::ParseElf(const std::vector<uint8_t>& data, size_t elf_offset,
   out->image.assign(max_va, 0);
   for (const auto& s : out->segments) {
     if (s.type != kPtLoad && s.type != kPtSceRelro) continue;
-    if (s.offset + s.filesz > remain || s.vaddr + s.filesz > max_va) {
+    if (s.offset + s.filesz > data.size() || s.vaddr + s.filesz > max_va) {
       *err = "segment out of bounds";
       return false;
     }
-    std::memcpy(out->image.data() + s.vaddr, e + s.offset, s.filesz);
+    std::memcpy(out->image.data() + s.vaddr, data.data() + s.offset, s.filesz);
   }
   return true;
 }
@@ -121,8 +140,8 @@ bool DivaLoader::Relocate(const std::vector<uint8_t>& file_data, size_t elf_offs
   }
   if (!dyn || !dl) { *err = "missing dynamic/dynlibdata"; return false; }
 
-  // 动态段直接从文件数据读（PT_DYNAMIC 未必被 PT_LOAD 覆盖进 image）
-  const uint8_t* dyn_base = file_data.data() + elf_offset + dyn->offset;
+  // 动态段直接从文件数据读（s.offset 已为绝对文件偏移；PT_DYNAMIC 未必被 PT_LOAD 覆盖进 image）
+  const uint8_t* dyn_base = file_data.data() + dyn->offset;
   std::unordered_map<uint64_t, std::vector<uint64_t>> tags;
   for (size_t off = 0; off + 16 <= dyn->filesz; off += 16) {
     uint64_t tag = ReadLE<uint64_t>(dyn_base + off);
@@ -221,13 +240,31 @@ LoadResult DivaLoader::Load(const std::string& path, uint64_t guest_base) {
 
   size_t elf_offset = 0;
   if (!UnwrapSelf(data, &elf_offset, &res.error)) return res;
-  if (!ParseElf(data, elf_offset, guest_base, &res, &res.error)) return res;
 
-  // dynlibdata blob
+  // SELF：解析段表（blocked 段 GetId=(flags>>20)&0xFFF → phdr 索引，file_offset 为 SELF 内绝对偏移）。
+  // SELF 段数据偏移与内嵌 ELF 程序头声称的不同，须按段表重映射（参照 shadPS4 TryLoadSegment）。
+  std::vector<SelfSegInfo> self_segs;
+  bool is_self = (elf_offset != 0);
+  if (is_self) {
+    uint16_t entry_count = ReadLE<uint16_t>(data.data() + 24);
+    for (int i = 0; i < entry_count; ++i) {
+      size_t off = 0x20 + i * 32;
+      if (off + 32 > data.size()) break;
+      uint64_t flags = ReadLE<uint64_t>(data.data() + off);
+      uint64_t foff = ReadLE<uint64_t>(data.data() + off + 8);
+      if ((flags & 0x800) == 0) continue;  // 仅 blocked 段承载数据
+      uint32_t id = (flags >> 20) & 0xFFF;
+      self_segs.push_back({id, foff});
+    }
+  }
+  if (!ParseElf(data, elf_offset, guest_base, &res, &res.error,
+                is_self ? &self_segs : nullptr)) return res;
+
+  // dynlibdata blob（s.offset 已为绝对文件偏移）
   for (const auto& s : res.segments) {
     if (s.type == kPtSceDynlibdata) {
-      std::vector<uint8_t> blob(data.data() + elf_offset + s.offset,
-                                data.data() + elf_offset + s.offset + s.filesz);
+      if (s.offset + s.filesz > data.size()) { res.error = "dynlibdata out of bounds"; return res; }
+      std::vector<uint8_t> blob(data.data() + s.offset, data.data() + s.offset + s.filesz);
       if (!Relocate(data, elf_offset, blob, &res, &res.error)) return res;
       break;
     }
