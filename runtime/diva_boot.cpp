@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "divaft/guest_bridge.h"
 #include "divaft/diva_runtime.h"
+#include "divaft/guest_memory.h"
 
 #include <cstdio>
 #include <cstring>
@@ -17,6 +18,12 @@ void Emit(std::vector<uint8_t>& c, std::initializer_list<uint8_t> bytes) {
 }
 void MovRaxImm64(std::vector<uint8_t>& c, uint64_t v) {
   Emit(c, {0x48, 0xB8});
+  for (int i = 0; i < 8; ++i) c.push_back((v >> (i * 8)) & 0xFF);
+}
+// mov r64, imm64（reg: 0=rax 1=rcx 2=rdx 3=rbx 4=rsp 5=rbp 6=rsi 7=rdi 8-15=r8-r15）
+void MovRegImm64(std::vector<uint8_t>& c, int reg, uint64_t v) {
+  if (reg < 8) Emit(c, {0x48, static_cast<uint8_t>(0xB8 + reg)});
+  else Emit(c, {0x49, static_cast<uint8_t>(0xB8 + (reg - 8))});
   for (int i = 0; i < 8; ++i) c.push_back((v >> (i * 8)) & 0xFF);
 }
 uint64_t Bits(double d) { uint64_t u; std::memcpy(&u, &d, 8); return u; }
@@ -153,6 +160,40 @@ static bool RunSelfTests() {
     std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x%llx)\n",
                 "host_call", ok ? "PASS" : "FAIL",
                 (unsigned long long)got, 12ULL);
+  }
+
+  // 内存 HLE：guest 调 sceKernelAllocateDirectMemory，验证分配成功且输出 physAddr
+  {
+    ++total;
+    divaft::GuestMemoryManager mem;
+    mem.Init(base + 0x100000, 0x100000);  // 1MB 堆
+    uint64_t alloc_veneer = bridge.ExposeHost("sceKernelAllocateDirectMemory",
+        [&mem](const uint64_t* a, unsigned, const double*) -> uint64_t {
+          uint64_t phys = 0;
+          int r = mem.AllocateDirect(a[2], a[3], &phys);
+          if (r == 0 && a[5]) *reinterpret_cast<uint64_t*>(a[5]) = phys;
+          return static_cast<uint64_t>(r);
+        });
+    uint64_t code_addr = base + 0x1000 * total;
+    uint64_t phys_out = base + 0x9000;
+    *reinterpret_cast<uint64_t*>(phys_out) = 0;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 7, 0);             // rdi = searchStart
+    MovRegImm64(c, 6, 0x100000);      // rsi = searchEnd
+    MovRegImm64(c, 2, 0x4000);        // rdx = len
+    MovRegImm64(c, 1, 0x4000);        // rcx = alignment
+    MovRegImm64(c, 8, 0);             // r8 = memoryType
+    MovRegImm64(c, 9, phys_out);      // r9 = physAddrOut
+    EmitCallRel32(c, code_addr, alloc_veneer);
+    Emit(c, {0xF4});                  // hlt
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    uint64_t phys = *reinterpret_cast<uint64_t*>(phys_out);
+    bool ok = (got == 0) && (phys >= base + 0x100000) && (phys != 0);
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (ret=%llu phys=0x%llx)\n",
+                "mem_hle", ok ? "PASS" : "FAIL",
+                (unsigned long long)got, (unsigned long long)phys);
   }
 
   bridge.Shutdown();

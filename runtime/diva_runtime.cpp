@@ -1,6 +1,7 @@
 // divaft_Android — DIVA 运行时实现（原创）
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "divaft/diva_runtime.h"
+#include "divaft/hle_kernel.h"
 
 #include <cstdio>
 #include <cstring>
@@ -14,8 +15,8 @@ DivaRuntime::~DivaRuntime() {
 }
 
 bool DivaRuntime::MapImage(const LoadResult& lr) {
-  // 区域 = 映像 + 4MB（veneer 1MB + 栈 + 余量）。OS 选地址（不 MAP_FIXED 低地址）。
-  region_size_ = lr.image_size + 4 * 1024 * 1024;
+  // 区域 = 映像 + 32MB（直接内存堆 24MB + veneer 1MB + 栈 + 余量）。OS 选地址。
+  region_size_ = lr.image_size + 32 * 1024 * 1024;
   void* p = mmap(nullptr, region_size_, PROT_READ | PROT_WRITE | PROT_EXEC,
                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (p == MAP_FAILED) { std::perror("mmap image"); return false; }
@@ -68,6 +69,9 @@ bool DivaRuntime::Init(const std::string& eboot_path, const std::string& contrac
     std::fprintf(stderr, "[diva] bridge init failed\n");
     return false;
   }
+  // 直接内存堆：映像之后 24MB。注册 libkernel 内存/时间 HLE。
+  mem_.Init(guest_base_ + lr.image_size, 24 * 1024 * 1024);
+  RegisterKernelHle(hle_, &mem_);
   if (!contract_path.empty()) hle_.LoadContract(contract_path);
   entry_ = guest_base_ + lr.entry;
   WireImports(lr);

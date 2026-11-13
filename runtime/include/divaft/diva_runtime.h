@@ -6,6 +6,7 @@
 #include "divaft/diva_loader.h"
 #include "divaft/guest_bridge.h"
 #include "divaft/hle_wire.h"
+#include "divaft/guest_memory.h"
 
 #include <cstdint>
 #include <string>
@@ -35,6 +36,7 @@ private:
 
   GuestBridge bridge_;
   HleWire hle_;
+  GuestMemoryManager mem_;
   uint64_t guest_base_ = 0;
   uint64_t region_size_ = 0;
   uint64_t entry_ = 0;
