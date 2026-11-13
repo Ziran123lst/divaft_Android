@@ -26,6 +26,7 @@ file(GLOB_RECURSE SHADER_SRCS CONFIGURE_DEPENDS "${SHADPS4}/src/shader_recompile
 # ---- common / video_core 依赖（shader_recompiler 引用面）----
 set(DEP_SRCS
   "${CMAKE_CURRENT_SOURCE_DIR}/shader_assert.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/shader_stubs.cpp"
   "${SHADPS4}/src/common/io_file.cpp"
   "${SHADPS4}/src/common/path_util.cpp"
   "${SHADPS4}/src/common/string_util.cpp"
@@ -59,6 +60,7 @@ target_include_directories(divaft_shader_recompiler PRIVATE
 )
 target_link_libraries(divaft_shader_recompiler PRIVATE sirit fmt::fmt Zydis::Zydis)
 target_compile_options(divaft_shader_recompiler PRIVATE -Wno-everything)
+target_compile_definitions(divaft_shader_recompiler PRIVATE SPDLOG_HEADER_ONLY)
 message(STATUS "shader_recompiler sources: ${SHADER_SRCS}")
 
 # 端到端验证：GCN shader → SPIR-V（shaders→Vulkan 核心管线实跑）
@@ -75,3 +77,4 @@ target_include_directories(shader_translate_test PRIVATE
   "${SHADPS4}/externals/xbyak"
 )
 target_compile_options(shader_translate_test PRIVATE -Wno-everything)
+target_compile_definitions(shader_translate_test PRIVATE SPDLOG_HEADER_ONLY)
