@@ -25,7 +25,7 @@ file(GLOB_RECURSE SHADER_SRCS CONFIGURE_DEPENDS "${SHADPS4}/src/shader_recompile
 
 # ---- common / video_core 依赖（shader_recompiler 引用面）----
 set(DEP_SRCS
-  "${SHADPS4}/src/common/assert.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/shader_assert.cpp"
   "${SHADPS4}/src/common/io_file.cpp"
   "${SHADPS4}/src/common/path_util.cpp"
   "${SHADPS4}/src/common/string_util.cpp"
