@@ -145,6 +145,7 @@ struct GuestBridge::Impl {
   uint64_t guest_size = 0;
   uint8_t* veneer_space = nullptr;
   uint64_t exit_hlt = 0;      // 返回蹦床：HLT 桩的 guest 地址
+  uint64_t tcb = 0;           // guest TCB（fs/gs 基址，libc TLS 访问需要）
   uint32_t next_id = 1;       // id 0 保留给 exit_hlt
   std::unordered_map<uint32_t, Veneer> by_id;
   bool initialized = false;
@@ -172,6 +173,19 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   impl_->exit_hlt = vbase;
   std::memset(impl_->veneer_space, 0, kVeneerSize);
   impl_->veneer_space[0] = 0xF4;  // hlt
+
+  // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted）。
+  // 低 4G 固定页，[tcb+0]=自身指针（x86-64 TLS 自指约定）。
+  {
+    const uint64_t tcb_addr = 0x48000000;
+    void* tp = mmap(reinterpret_cast<void*>(tcb_addr), 4096, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    if (tp != MAP_FAILED) {
+      impl_->tcb = tcb_addr;
+      std::memset(tp, 0, 4096);
+      *reinterpret_cast<uint64_t*>(tcb_addr) = tcb_addr;  // 自指
+    }
+  }
 
 #ifdef DIVAFT_WITH_FEX
   FEXCore::Config::Initialize();
@@ -240,6 +254,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   cs->L = 1; cs->D = 0;
   state.cs_cached = FEXCore::Core::CPUState::CalculateGDTBase(*cs);
   state.mxcsr = 0x9fc0;  // PS4 默认 FTZ+DAZ
+  if (impl_->tcb) { state.fs_cached = impl_->tcb; state.gs_cached = impl_->tcb; }  // TLS/TCB
   state.gregs[FEXCore::X86State::REG_RSP] = rsp;
   // SysV host→guest 参数：RDI/RSI/RDX/RCX/R8/R9。
   const int regs[6] = {FEXCore::X86State::REG_RDI, FEXCore::X86State::REG_RSI,
