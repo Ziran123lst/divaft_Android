@@ -101,8 +101,28 @@ bool DivaRuntime::Init(const std::string& eboot_path, const std::string& contrac
 
 bool DivaRuntime::Boot() {
   if (!initialized_) return false;
-  std::fprintf(stderr, "[diva] booting entry=0x%llx\n", (unsigned long long)entry_);
-  bridge_.CallGuest(entry_, nullptr, 0);
+  // PS4 eboot 入口约定（参照 shadPS4 linker.cpp RunMainEntry / EntryParams）：
+  //   RDI = EntryParams{ int argc; u32 pad; char* argv[]; }，RSI = exit 函数指针。
+  //   入口汇编 mov r14d,[rdi]（argc）、lea r15,[rdi+8]（argv）。
+  uint64_t name = heap_.Malloc(32);
+  if (name) std::memcpy(reinterpret_cast<void*>(name), "app0", 5);
+  uint64_t params = heap_.Malloc(64);
+  if (params) {
+    std::memset(reinterpret_cast<void*>(params), 0, 64);
+    *reinterpret_cast<uint32_t*>(params) = 1;          // argc
+    *reinterpret_cast<uint64_t*>(params + 8) = name;   // argv[0]
+    *reinterpret_cast<uint64_t*>(params + 16) = 0;     // argv[1] = NULL
+  }
+  uint64_t exit_fn = bridge_.ExposeHost("ProgramExit",
+      [](const uint64_t* a, unsigned, const double*, HleReturn*) -> uint64_t {
+        std::fprintf(stderr, "[diva] ProgramExit(%lld)\n", (long long)a[0]);
+        return 0;
+      });
+  std::fprintf(stderr, "[diva] booting entry=0x%llx params=0x%llx exit=0x%llx\n",
+               (unsigned long long)entry_, (unsigned long long)params,
+               (unsigned long long)exit_fn);
+  uint64_t args[2] = {params, exit_fn};
+  bridge_.CallGuest(entry_, args, 2);
   return true;
 }
 
