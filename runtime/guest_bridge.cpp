@@ -110,6 +110,9 @@ public:
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
     auto it = by_id_->find(id);
     if (it == by_id_->end()) return 0;
+    // 诊断：读栈参前先打印函数名（定位读栈崩溃的函数）
+    std::fprintf(stderr, "[sys] %s rsp=0x%llx\n", it->second.name.c_str(),
+                 (unsigned long long)gregs[FEXCore::X86State::REG_RSP]);
     // SysV 前3参 RDI/RSI/RDX（FEX 保住）；第4-6参由 veneer 压栈保存（FEX syscall 不保 r8/r9/r10）。
     uint64_t int_args[14] = {
         gregs[FEXCore::X86State::REG_RDI], gregs[FEXCore::X86State::REG_RSI],
