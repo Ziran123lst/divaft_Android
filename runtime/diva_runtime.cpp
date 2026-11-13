@@ -3,6 +3,9 @@
 #include "divaft/diva_runtime.h"
 #include "divaft/hle_kernel.h"
 #include "divaft/hle_libc.h"
+#include "divaft/hle_graphics.h"
+#include "divaft/hle_audio.h"
+#include "divaft/hle_pad.h"
 
 #include <cstdio>
 #include <cstring>
@@ -190,8 +193,11 @@ bool DivaRuntime::Init(const std::string& eboot_path, const std::string& contrac
   size_t nk = RegisterKernelHle(hle_, &mem_, &bridge_,
                                 lr.proc_param_vaddr ? guest_base_ + lr.proc_param_vaddr : 0);
   size_t nl = RegisterLibcHle(hle_, &heap_);
-  std::fprintf(stderr, "[diva] HLE 注册：kernel=%zu libc=%zu（契约 %zu 条）\n",
-               nk, nl, hle_.contract_size());
+  size_t ng = RegisterGraphicsHle(hle_, &video_backend_);
+  size_t na = RegisterAudioHle(hle_, &audio_out_);
+  size_t np = RegisterPadHle(hle_, &input_pad_);
+  std::fprintf(stderr, "[diva] HLE 注册：kernel=%zu libc=%zu graphics=%zu audio=%zu pad=%zu（契约 %zu 条）\n",
+               nk, nl, ng, na, np, hle_.contract_size());
 
   // 可选加载自带 libc（多模块交叉接线）。
   if (!libc_path.empty()) {

@@ -8,6 +8,9 @@
 #include "divaft/guest_bridge.h"
 #include "divaft/hle_wire.h"
 #include "divaft/guest_memory.h"
+#include "divaft/video_backend.h"
+#include "divaft/audio_out.h"
+#include "divaft/input_pad.h"
 
 #include <cstdint>
 #include <string>
@@ -48,6 +51,9 @@ private:
   HleWire hle_;
   GuestMemoryManager mem_;   // libkernel 直接内存
   GuestHeap heap_;           // libc malloc/free（guest 地址）
+  NullVideoBackend video_backend_;  // 图形后端占位（阶段3 接 Vulkan/Turnip）
+  AudioOut audio_out_;              // 音频输出（阶段4 接 AAudio）
+  InputPad input_pad_;              // 触屏输入合成（阶段5）
   uint64_t guest_base_ = 0;
   uint64_t region_size_ = 0;
   uint64_t image_aligned_ = 0;

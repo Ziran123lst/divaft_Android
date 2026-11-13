@@ -39,6 +39,9 @@ public:
   bool RegisterByName(const std::string& lib, const std::string& name, HleFn fn);
   bool RegisterByNameExt(const std::string& lib, const std::string& name, HostFn fn);
 
+  // 把契约中某库的全部函数用同一处理器注册（整库 stub 骨架用）。返回注册条数。
+  size_t RegisterLibrary(const std::string& lib, HleFn fn);
+
   // 按 NID 查找实现；未命中返回 nullptr（调用方走记录型 stub）。
   const HleBinding* Resolve(const std::string& nid) const;
 

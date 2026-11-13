@@ -35,6 +35,16 @@ bool HleWire::RegisterByNameExt(const std::string& lib, const std::string& name,
   return true;
 }
 
+size_t HleWire::RegisterLibrary(const std::string& lib, HleFn fn) {
+  size_t n = 0;
+  for (const auto& kv : contract_) {
+    if (kv.second.lib != lib) continue;
+    Register(kv.first, lib, kv.second.name, fn);
+    ++n;
+  }
+  return n;
+}
+
 const HleBinding* HleWire::Resolve(const std::string& nid) const {
   auto it = bindings_.find(nid);
   return it == bindings_.end() ? nullptr : &it->second;
