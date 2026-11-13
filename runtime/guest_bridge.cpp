@@ -126,7 +126,8 @@ public:
   }
   FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(
       FEXCore::Core::InternalThreadState*, uint64_t) override {
-    return {base_, size_, false};
+    // 覆盖整个低 4G（eboot + 自带 libc 等多模块均在其中），参照 uncharted 全地址空间做法。
+    return {0, 0x100000000ULL, true};
   }
   std::optional<FEXCore::ExecutableFileSectionInfo> LookupExecutableFileSection(
       FEXCore::Core::InternalThreadState*, uint64_t) override {

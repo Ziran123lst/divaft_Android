@@ -296,7 +296,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "[diva-boot] loading %s\n", argv[1]);
     divaft::DivaRuntime rt;
     const char* contract = argc >= 3 ? argv[2] : "";
-    if (!rt.Init(argv[1], contract)) {
+    const char* libc_path = argc >= 4 ? argv[3] : "";
+    if (!rt.Init(argv[1], contract, libc_path)) {
       std::fprintf(stderr, "[diva-boot] init failed\n");
       return 2;
     }

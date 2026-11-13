@@ -145,13 +145,23 @@ bool DivaLoader::Relocate(const std::vector<uint8_t>& file_data, size_t elf_offs
     out->needed_modules.push_back(CStr(blob.data(), strtab + name_off, strtab + strsz));
   }
 
-  // 符号表
-  struct Sym { std::string name; uint16_t shndx; };
+  // 符号表（含 st_value，供导出表）
+  struct Sym { std::string name; uint16_t shndx; uint64_t value; };
   std::vector<Sym> syms;
   for (size_t off = symtab; off + 24 <= symtab + symsz; off += 24) {
     uint32_t no = ReadLE<uint32_t>(blob.data() + off);
     uint16_t shndx = ReadLE<uint16_t>(blob.data() + off + 6);
-    syms.push_back({sym_name(no), shndx});
+    uint64_t value = ReadLE<uint64_t>(blob.data() + off + 8);
+    syms.push_back({sym_name(no), shndx, value});
+  }
+
+  // 导出表：shndx != 0 的具名符号（NID#库#模块 或纯 NID），addr=st_value。
+  for (const auto& s : syms) {
+    if (s.shndx == 0 || s.name.empty()) continue;
+    size_t h1 = s.name.find('#');
+    std::string nid = (h1 == std::string::npos) ? s.name : s.name.substr(0, h1);
+    if (nid.size() != 11) continue;  // 仅 NID 形态的导出
+    out->exports.push_back({nid, s.value});
   }
 
   // 重定位
@@ -162,7 +172,11 @@ bool DivaLoader::Relocate(const std::vector<uint8_t>& file_data, size_t elf_offs
       uint32_t kind = info & 0xFFFFFFFF;
       uint32_t si = info >> 32;
       out->reloc_count++;
-      if (kind == 8) continue;  // RELATIVE：guest_base 相关，映射时处理
+      if (kind == 8) {  // RELATIVE：记录 target+addend，映射时加基址
+        uint64_t addend = ReadLE<uint64_t>(blob.data() + off + 16);
+        out->relative_relocs.push_back({target, addend});
+        continue;
+      }
       if ((kind == 1 || kind == 6 || kind == 7) && si < syms.size() && syms[si].shndx == 0) {
         ImportSymbol im;
         std::string n = syms[si].name;

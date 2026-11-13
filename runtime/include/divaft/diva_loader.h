@@ -51,6 +51,16 @@ struct ImportSymbol {
   uint64_t reloc_target; // 重定位写入的 guest 地址
 };
 
+struct ExportSymbol {
+  std::string nid;   // NID
+  uint64_t addr;     // guest 虚拟地址（st_value，相对映像基址）
+};
+
+struct RelativeReloc {
+  uint64_t target;   // 映像内偏移（写入位置）
+  uint64_t addend;   // 需加基址的值
+};
+
 struct LoadResult {
   bool ok = false;
   std::string error;
@@ -60,6 +70,8 @@ struct LoadResult {
   std::vector<Segment> segments;
   std::vector<std::string> needed_modules;
   std::vector<ImportSymbol> imports;
+  std::vector<ExportSymbol> exports;  // 导出表（多模块交叉接线用）
+  std::vector<RelativeReloc> relative_relocs;  // RELATIVE 重定位（映射时加基址）
   size_t reloc_count = 0;
 };
 

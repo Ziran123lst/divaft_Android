@@ -13,6 +13,10 @@
 #include <thread>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
+#include <sys/mman.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 namespace divaft {
 
@@ -243,6 +247,95 @@ size_t RegisterKernelHle(HleWire& wire, GuestMemoryManager* mem, GuestBridge* br
   reg("stack_chk_fail", [](const uint64_t*, unsigned) -> uint64_t {
     std::fprintf(stderr, "[kernel] stack_chk_fail: 栈金丝雀校验失败\n");
     return 0; });
+
+  // ---- 自带 libc 所需 kernel（scePthread* 变体 + 内存/时间），按 NID 注册 ----
+  // 这些 NID 不在 eboot 契约里（libc 自身导入），故用显式 NID。多数复用现有 pthread backing。
+  auto regnid = [&](const char* nid, const char* name, HleFn fn) {
+    wire.Register(nid, "libkernel", name, std::move(fn)); ++n;
+  };
+  // pthread 条件变量 sce 变体
+  regnid("kDh-NfxgMtE", "scePthreadCondSignal", [](const uint64_t* a, unsigned) -> uint64_t {
+    pthread_cond_t* c; { std::lock_guard<std::mutex> lk(g_sync_mu); c = GetCond(a[0]); }
+    return c && pthread_cond_signal(c) == 0 ? 0 : 22; });
+  regnid("JGgj7Uvrl+A", "scePthreadCondBroadcast", [](const uint64_t* a, unsigned) -> uint64_t {
+    pthread_cond_t* c; { std::lock_guard<std::mutex> lk(g_sync_mu); c = GetCond(a[0]); }
+    return c && pthread_cond_broadcast(c) == 0 ? 0 : 22; });
+  regnid("g+PZd2hiacg", "scePthreadCondDestroy", [](const uint64_t* a, unsigned) -> uint64_t {
+    std::lock_guard<std::mutex> lk(g_sync_mu);
+    auto it = g_conds.find(a[0]); if (it == g_conds.end()) return 0;
+    pthread_cond_destroy(it->second); delete it->second; g_conds.erase(it); return 0; });
+  regnid("BmMjYxmew1w", "scePthreadCondTimedwait", [](const uint64_t* a, unsigned) -> uint64_t {
+    pthread_cond_t* c; pthread_mutex_t* m;
+    { std::lock_guard<std::mutex> lk(g_sync_mu); c = GetCond(a[0]); m = GetMutex(a[1]); }
+    if (!c || !m) return 22;
+    struct timespec ts { (time_t)(a[2] / 1000000000ULL), (long)(a[2] % 1000000000ULL) };
+    int r = pthread_cond_timedwait(c, m, &ts); return r == 0 ? 0 : r; });
+  regnid("upoVrzMHFeE", "scePthreadMutexTrylock", [](const uint64_t* a, unsigned) -> uint64_t {
+    pthread_mutex_t* m; { std::lock_guard<std::mutex> lk(g_sync_mu); m = GetMutex(a[0]); }
+    if (!m) return 22; int r = pthread_mutex_trylock(m); return r == 0 ? 0 : r; });
+  // mutexattr / attr（形式参数，安全默认）
+  regnid("F8bUHwAG284", "scePthreadMutexattrInit", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
+  regnid("smWEktiyyG0", "scePthreadMutexattrDestroy", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
+  regnid("iMp8QpE+XO4", "scePthreadMutexattrSettype", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
+  regnid("x1X76arYMxU", "scePthreadAttrGet", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
+  regnid("8+s5BzZjxSg", "scePthreadAttrGetaffinity", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
+  regnid("JaRMy+QcpeU", "scePthreadAttrGetdetachstate", [](const uint64_t* a, unsigned) -> uint64_t {
+    if (a[1]) *reinterpret_cast<int*>(a[1]) = 0; return 0; });
+  regnid("3PtV6p3QNX4", "scePthreadEqual", [](const uint64_t* a, unsigned) -> uint64_t {
+    return pthread_equal((pthread_t)a[0], (pthread_t)a[1]) ? 1 : 0; });
+  regnid("3kg7rT0NQIs", "scePthreadExit", [](const uint64_t* a, unsigned) -> uint64_t {
+    pthread_exit(reinterpret_cast<void*>(a[0])); return 0; });
+  regnid("geDaqgH9lTg", "scePthreadKeyCreate", [](const uint64_t* a, unsigned) -> uint64_t {
+    pthread_key_t k; int r = pthread_key_create(&k, nullptr);
+    if (r == 0 && a[0]) *reinterpret_cast<uint32_t*>(a[0]) = (uint32_t)k; return r; });
+  regnid("PrdHuuDekhY", "scePthreadKeyDelete", [](const uint64_t* a, unsigned) -> uint64_t {
+    return pthread_key_delete((pthread_key_t)a[0]); });
+  regnid("eoht7mQOCmo", "scePthreadGetspecific", [](const uint64_t* a, unsigned) -> uint64_t {
+    return (uint64_t)pthread_getspecific((pthread_key_t)a[0]); });
+  regnid("+BzXYkqYeLE", "scePthreadSetspecific", [](const uint64_t* a, unsigned) -> uint64_t {
+    return pthread_setspecific((pthread_key_t)a[0], reinterpret_cast<void*>(a[1])); });
+  regnid("14bOACANTBo", "scePthreadOnce", [bridge](const uint64_t* a, unsigned) -> uint64_t {
+    static std::mutex once_mu; static std::unordered_map<uint64_t, bool> done;
+    std::lock_guard<std::mutex> lk(once_mu);
+    if (!done[a[0]]) { done[a[0]] = true; if (a[1]) bridge->CallGuest(a[1], nullptr, 0); }
+    return 0; });
+  regnid("6XG4B33N09g", "sched_yield", [](const uint64_t*, unsigned) -> uint64_t { sched_yield(); return 0; });
+  // 内存 / 时间
+  regnid("BPE9s9vQQXo", "mmap", [](const uint64_t* a, unsigned) -> uint64_t {
+    // 简化 guest mmap：低4G bump 分配（规避 FEX-qemu 高地址截断），忽略 fd/offset。
+    static std::mutex mmap_mu; static uint64_t cursor = 0x50000000;
+    std::lock_guard<std::mutex> lk(mmap_mu);
+    uint64_t len = (a[1] + 4095) & ~4095ULL; if (len == 0) len = 4096;
+    uint64_t r = cursor;
+    if (r + len >= 0xF0000000ULL) return (uint64_t)-1;
+    void* p = mmap(reinterpret_cast<void*>(r), len, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    if (p == MAP_FAILED) return (uint64_t)-1;
+    cursor = r + len; return r; });
+  regnid("k+AXqu2-eBc", "getpagesize", [](const uint64_t*, unsigned) -> uint64_t {
+    return (uint64_t)sysconf(_SC_PAGESIZE); });
+  regnid("lLMT9vJAck0", "clock_gettime", [](const uint64_t* a, unsigned) -> uint64_t {
+    struct timespec ts; int r = clock_gettime((clockid_t)a[0], &ts);
+    if (r == 0 && a[1]) { auto* g = reinterpret_cast<uint64_t*>(a[1]); g[0] = ts.tv_sec; g[1] = ts.tv_nsec; }
+    return r; });
+  regnid("n88vx3C5nW8", "gettimeofday", [](const uint64_t* a, unsigned) -> uint64_t {
+    struct timeval tv; int r = gettimeofday(&tv, nullptr);
+    if (r == 0 && a[0]) { auto* g = reinterpret_cast<uint64_t*>(a[0]); g[0] = tv.tv_sec; g[1] = tv.tv_usec; }
+    return r; });
+  regnid("yS8U2TGCe1A", "nanosleep", [](const uint64_t* a, unsigned) -> uint64_t {
+    if (!a[0]) return 22; auto* g = reinterpret_cast<const uint64_t*>(a[0]);
+    struct timespec ts { (time_t)g[0], (long)g[1] }; nanosleep(&ts, nullptr); return 0; });
+  regnid("NhpspxdjEKU", "_nanosleep", [](const uint64_t* a, unsigned) -> uint64_t {
+    if (!a[0]) return 22; auto* g = reinterpret_cast<const uint64_t*>(a[0]);
+    struct timespec ts { (time_t)g[0], (long)g[1] }; nanosleep(&ts, nullptr); return 0; });
+  regnid("6Z83sYWFlA8", "_exit", [](const uint64_t* a, unsigned) -> uint64_t {
+    std::fprintf(stderr, "[kernel] _exit(%d)\n", (int)a[0]); _exit((int)a[0]); return 0; });
+  regnid("hHlZQUnlxSM", "getrusage", [](const uint64_t* a, unsigned) -> uint64_t {
+    struct rusage ru; int r = getrusage((int)a[0], &ru);
+    if (r == 0 && a[1]) std::memset(reinterpret_cast<void*>(a[1]), 0, 144);
+    return r; });
+  regnid("9BcDykPmo1I", "__error", [](const uint64_t*, unsigned) -> uint64_t {
+    static int guest_errno = 0; return (uint64_t)&guest_errno; });
 
   return n;
 }
