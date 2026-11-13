@@ -298,8 +298,15 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   // callret 预测栈（带守护页，per-call）。
   const size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
   const size_t cr_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
-  auto* cr_alloc = static_cast<uint8_t*>(mmap(nullptr, cr_size + 2 * page, PROT_NONE,
-                                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  // callret 预测栈也放低 4G（与 guest 栈/映像一致，规避 FEX-qemu 高地址截断）。
+  static std::atomic<uint64_t> cr_cursor{0x70000000};
+  uint64_t cr_base = cr_cursor.fetch_add(cr_size + 2 * page);
+  auto* cr_alloc = static_cast<uint8_t*>(mmap(reinterpret_cast<void*>(cr_base), cr_size + 2 * page,
+                                              PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0));
+  if (cr_alloc == MAP_FAILED) {
+    cr_alloc = static_cast<uint8_t*>(mmap(nullptr, cr_size + 2 * page, PROT_NONE,
+                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  }
   if (cr_alloc != MAP_FAILED) {
     mprotect(cr_alloc + page, cr_size, PROT_READ | PROT_WRITE);
     thread->CallRetStackBase = cr_alloc + page;
