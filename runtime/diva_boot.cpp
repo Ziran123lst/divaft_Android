@@ -289,6 +289,7 @@ static bool RunSelfTests() {
 
 
 int main(int argc, char** argv) {
+  setvbuf(stderr, nullptr, _IONBF, 0);  // 崩溃前日志不丢
   bool self_ok = RunSelfTests();
   if (argc >= 2) {
     if (!self_ok)

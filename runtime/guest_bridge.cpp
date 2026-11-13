@@ -67,16 +67,17 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
     if (rip && reinterpret_cast<const uint8_t*>(rip)[0] == kHlt) {
       siglongjmp(t_exit_jmp, 1);
     }
-    // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / RSP / RBP / rip 处字节。
+    // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / 全寄存器 / rip 处字节。
     auto& gregs = thread->CurrentFrame->State.gregs;
-    std::fprintf(stderr, "[guest-crash] sig=%d rip=0x%llx faultaddr=%llx rsp=0x%llx rbp=0x%llx bytes:",
-                 sig, (unsigned long long)rip, (unsigned long long)info->si_addr,
-                 (unsigned long long)gregs[FEXCore::X86State::REG_RSP],
-                 (unsigned long long)gregs[FEXCore::X86State::REG_RBP]);
+    std::fprintf(stderr, "[guest-crash] sig=%d code=%d rip=0x%llx faultaddr=%llx bytes:",
+                 sig, info->si_code, (unsigned long long)rip, (unsigned long long)info->si_addr);
     if (rip) {
-      for (int i = 0; i < 8; ++i)
+      for (int i = 0; i < 12; ++i)
         std::fprintf(stderr, " %02x", reinterpret_cast<const uint8_t*>(rip)[i]);
     }
+    std::fprintf(stderr, "\n[guest-crash] gregs:");
+    for (int i = 0; i < 16; ++i)
+      std::fprintf(stderr, " r%d=%llx", i, (unsigned long long)gregs[i]);
     std::fprintf(stderr, "\n");
     siglongjmp(t_exit_jmp, 2);
   }
