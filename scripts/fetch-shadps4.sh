@@ -27,6 +27,7 @@ SUBMODULES=(
   externals/xxhash
   externals/spdlog
   externals/json
+  externals/xbyak
 )
 for sm in "${SUBMODULES[@]}"; do
   echo "=== submodule $sm ==="
