@@ -22,6 +22,7 @@ constexpr uint32_t kPtLoad = 1;
 constexpr uint32_t kPtDynamic = 2;
 constexpr uint32_t kPtSceRelro = 0x61000010;
 constexpr uint32_t kPtSceDynlibdata = 0x61000000;
+constexpr uint32_t kPtSceProcparam = 0x61000001;  // 进程参数段（sceKernelGetProcParam 返回它）
 
 // SCE 动态标签
 constexpr uint64_t kDtSceNeededModule = 0x6100000F;
@@ -80,6 +81,7 @@ struct LoadResult {
   std::vector<RelativeReloc> relative_relocs;  // RELATIVE 重定位（映射时加基址）
   std::vector<uint64_t> preinit_funcs;  // PREINIT_ARRAY 函数 vaddr（加载后须调用）
   std::vector<uint64_t> init_funcs;     // INIT_ARRAY / DT_INIT 函数 vaddr
+  uint64_t proc_param_vaddr = 0;        // PT_SCE_PROCPARAM 段 vaddr（sceKernelGetProcParam）
   size_t reloc_count = 0;
 };
 

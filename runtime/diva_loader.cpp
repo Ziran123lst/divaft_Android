@@ -89,6 +89,7 @@ bool DivaLoader::ParseElf(const std::vector<uint8_t>& data, size_t elf_offset,
     s.filesz = ReadLE<uint64_t>(e + off + 32);
     s.memsz = ReadLE<uint64_t>(e + off + 40);
     out->segments.push_back(s);
+    if (s.type == kPtSceProcparam) out->proc_param_vaddr = s.vaddr;
   }
 
   // 构建映像：PT_LOAD + PT_SCE_RELRO

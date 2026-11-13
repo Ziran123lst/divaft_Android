@@ -13,7 +13,9 @@
 namespace divaft {
 
 // 注册 libkernel 内存/时间/同步/线程 HLE 到 wire。bridge 供 pthread_create 执行 guest 例程。
+// proc_param_addr 为 eboot 进程参数 guest 地址（sceKernelGetProcParam 返回它，0=未提供）。
 // 返回成功注册条数。
-size_t RegisterKernelHle(HleWire& wire, GuestMemoryManager* mem, GuestBridge* bridge);
+size_t RegisterKernelHle(HleWire& wire, GuestMemoryManager* mem, GuestBridge* bridge,
+                         uint64_t proc_param_addr = 0);
 
 }  // namespace divaft

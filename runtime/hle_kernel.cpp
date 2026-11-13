@@ -54,7 +54,8 @@ pthread_cond_t* GetCond(uint64_t addr) {
 }
 }  // namespace
 
-size_t RegisterKernelHle(HleWire& wire, GuestMemoryManager* mem, GuestBridge* bridge) {
+size_t RegisterKernelHle(HleWire& wire, GuestMemoryManager* mem, GuestBridge* bridge,
+                         uint64_t proc_param_addr) {
   size_t n = 0;
   auto reg = [&](const char* name, HleFn fn) {
     if (wire.RegisterByName("libkernel", name, std::move(fn))) ++n;
@@ -336,6 +337,13 @@ size_t RegisterKernelHle(HleWire& wire, GuestMemoryManager* mem, GuestBridge* br
     return r; });
   regnid("9BcDykPmo1I", "__error", [](const uint64_t*, unsigned) -> uint64_t {
     static int guest_errno = 0; return (uint64_t)&guest_errno; });
+  // 进程参数：libc 预初始化靠它拿堆/libc 配置，返回 eboot 内嵌 OrbisProcParam 的 guest 地址。
+  regnid("959qrazPIrg", "sceKernelGetProcParam", [proc_param_addr](const uint64_t*, unsigned) -> uint64_t {
+    return proc_param_addr; });
+  regnid("OMDRKKAZ8I4", "sceKernelDebugRaiseException", [](const uint64_t* a, unsigned) -> uint64_t {
+    std::fprintf(stderr, "[kernel] DebugRaiseException code=0x%llx（libc 初始化报错，多为前置参数缺失）\n",
+                 (unsigned long long)a[0]);
+    return 0; });
 
   return n;
 }

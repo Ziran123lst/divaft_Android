@@ -187,7 +187,8 @@ bool DivaRuntime::Init(const std::string& eboot_path, const std::string& contrac
     if (!hle_.LoadContract(contract_path))
       std::fprintf(stderr, "[diva] 警告：契约加载失败 %s\n", contract_path.c_str());
   }
-  size_t nk = RegisterKernelHle(hle_, &mem_, &bridge_);
+  size_t nk = RegisterKernelHle(hle_, &mem_, &bridge_,
+                                lr.proc_param_vaddr ? guest_base_ + lr.proc_param_vaddr : 0);
   size_t nl = RegisterLibcHle(hle_, &heap_);
   std::fprintf(stderr, "[diva] HLE 注册：kernel=%zu libc=%zu（契约 %zu 条）\n",
                nk, nl, hle_.contract_size());
