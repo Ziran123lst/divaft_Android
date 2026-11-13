@@ -27,7 +27,7 @@ jobs:
           CXX="g++ -std=c++20 -O2 -I runtime/include"
           $CXX runtime/test_guest_heap.cpp runtime/guest_memory.cpp -o /tmp/th
           /tmp/th
-          $CXX runtime/test_hle_wire.cpp runtime/hle_wire.cpp runtime/hle_kernel.cpp runtime/hle_libc.cpp runtime/guest_memory.cpp -o /tmp/tw
+          $CXX runtime/test_hle_wire.cpp runtime/hle_wire.cpp runtime/hle_kernel.cpp runtime/hle_libc.cpp runtime/guest_memory.cpp runtime/guest_bridge.cpp -o /tmp/tw -lpthread
           /tmp/tw runtime/data/contract.tsv
           echo "HOST_HLE_TEST_PASS"
 
