@@ -66,6 +66,14 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
     if (rip && reinterpret_cast<const uint8_t*>(rip)[0] == kHlt) {
       siglongjmp(t_exit_jmp, 1);
     }
+    // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / rip 处字节。
+    std::fprintf(stderr, "[guest-crash] sig=%d rip=0x%llx faultaddr=%llx bytes:",
+                 sig, (unsigned long long)rip, (unsigned long long)info->si_addr);
+    if (rip) {
+      for (int i = 0; i < 8; ++i)
+        std::fprintf(stderr, " %02x", reinterpret_cast<const uint8_t*>(rip)[i]);
+    }
+    std::fprintf(stderr, "\n");
     siglongjmp(t_exit_jmp, 2);
   }
   _exit(128 + sig);
