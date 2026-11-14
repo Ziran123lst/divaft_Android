@@ -103,8 +103,15 @@ jobs:
             -lvulkan -o /tmp/test_vulkan_render
           ICD=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)
           if [ -n "$ICD" ]; then export VK_ICD_FILENAMES="$ICD"; fi
+          ls -la /tmp/test_vulkan_render
+          set +e
           /tmp/test_vulkan_render /tmp/diva_vert.spv /tmp/diva_frag.spv /tmp/tri_vert.spv /tmp/tri_frag.spv \
-            | tee /tmp/vulkan-render.log
+            > /tmp/vulkan-render.log 2>&1
+          RC=$?
+          set -e
+          echo "test exit code: $RC"
+          cat /tmp/vulkan-render.log
+          [ $RC -eq 0 ]
           grep -q VULKAN_RENDER_TEST_PASS /tmp/vulkan-render.log
 
       - name: Upload shader_recompiler library
