@@ -15,14 +15,21 @@ endif()
 # ---- externals ----
 set(SIRIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${SHADPS4}/externals/sirit" "${CMAKE_BINARY_DIR}/sirit" EXCLUDE_FROM_ALL)
-add_subdirectory("${SHADPS4}/externals/fmt" "${CMAKE_BINARY_DIR}/fmt" EXCLUDE_FROM_ALL)
 set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory("${SHADPS4}/externals/zydis" "${CMAKE_BINARY_DIR}/zydis" EXCLUDE_FROM_ALL)
+# spdlog/fmt 顺序对齐 shadPS4 externals/CMakeLists.txt：先 spdlog（fmt::fmt 尚不存在→
+# SPDLOG_FMT_EXTERNAL 保持 OFF，spdlog 自带 fmt 并创建 fmt::fmt），随后仅在缺 fmt 时补 add_subdirectory。
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)  # 复用上面已 add_subdirectory 的 fmt::fmt，避免 spdlog 自带 fmt 目标重复
+set(SPDLOG_NO_EXCEPTIONS ON)
+if(TARGET fmt::fmt)
+  set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
+endif()
 add_subdirectory("${SHADPS4}/externals/spdlog" "${CMAKE_BINARY_DIR}/spdlog" EXCLUDE_FROM_ALL)
+if(NOT TARGET fmt::fmt)
+  add_subdirectory("${SHADPS4}/externals/fmt" "${CMAKE_BINARY_DIR}/fmt" EXCLUDE_FROM_ALL)
+endif()
 
 # ---- shader_recompiler 源 ----
 file(GLOB_RECURSE SHADER_SRCS CONFIGURE_DEPENDS "${SHADPS4}/src/shader_recompiler/*.cpp")
