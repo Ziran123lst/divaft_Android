@@ -8,12 +8,16 @@
 #include "shader_recompiler/runtime_info.h"
 #include "shader_recompiler/info.h"
 #include "shader_recompiler/params.h"
+#include "common/logging/log.h"
 #include <cstdio>
 #include <vector>
 #include <array>
 #include <span>
 
 int main() {
+  // 初始化日志（否则 ASSERT 的 VLog 静默返回，断言消息不可见）。
+  Common::Log::Setup("shader_translate_test");
+  std::fprintf(stderr, "[ckpt] logging ready\n"); std::fflush(stderr);
   // 最简 GCN compute shader：S_ENDPGM (0xBF810000)。
   std::array<uint32_t, 1> code = {0xBF810000u};
   std::array<uint32_t, 16> user_data{};
@@ -39,9 +43,12 @@ int main() {
   Shader::Pools pools;
   Shader::Backend::Bindings binding{};
 
+  std::fprintf(stderr, "[ckpt] before TranslateProgram\n"); std::fflush(stderr);
   const auto ir = Shader::TranslateProgram(std::span<const uint32_t>(code), pools, info,
                                            runtime_info, profile);
+  std::fprintf(stderr, "[ckpt] after TranslateProgram, before EmitSPIRV\n"); std::fflush(stderr);
   auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir, binding);
+  std::fprintf(stderr, "[ckpt] after EmitSPIRV\n"); std::fflush(stderr);
 
   std::printf("SPIR-V words=%zu\n", spv.size());
   bool ok = spv.size() >= 5 && spv[0] == 0x07230203u;  // SPIR-V magic
