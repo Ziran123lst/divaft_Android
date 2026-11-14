@@ -139,6 +139,11 @@ static bool TranslateOne(const std::string& name, const uint32_t* code, size_t c
     }
   }
 
+  if (hw == Shader::HwStage::Compute) {
+    // 离线默认 workgroup size（真机来自 PM4 COMPUTE_DISPATCH_INITIATOR 状态）。
+    runtime_info.hw.cs.workgroup_size = {64, 1, 1};
+  }
+
   Shader::Profile profile{};
   profile.supported_spirv = 0x00010600;  // SPIR-V 1.6（对齐 shadPS4）
   profile.subgroup_size = 64;
