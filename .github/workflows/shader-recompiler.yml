@@ -35,9 +35,6 @@ jobs:
       - name: Fetch shadPS4 + externals
         run: bash scripts/fetch-shadps4.sh
 
-      - name: Patch recompiler (prologue-before-translate fix + post-first-ssa dump)
-        run: python3 scripts/patch_recompiler.py
-
       - name: Configure shader_recompiler (NDK arm64-v8a)
         run: |
           cmake -S shader_build -B build/shader -G Ninja \
@@ -64,10 +61,6 @@ jobs:
           mkdir -p "$XDG_DATA_HOME"
           qemu-aarch64 ./build/shader/shader_translate_test_static | tee /tmp/translate-test.log
           grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
-          echo "=== 顶点 IR dump（定位顶点索引 prologue 消除点）==="
-          DUMPDIR="$XDG_DATA_HOME/shadPS4/shader/dumps"
-          echo "--- post-first-ssa vs_ dump（SSA 刚结束）prologue/v_cvt 踪迹 ---"
-          grep -nE 'Undef|Prologue|GetAttributeU32|VertexId|SetVectorRegister|BitCastF32U32|GetVectorRegister' "$DUMPDIR"/vs_*.post-first-ssa.irprogram.txt 2>/dev/null | head -25 || echo "no post-first-ssa dump"
 
       - name: Verify SPIR-V consumed by Vulkan (software lavapipe, headless)
         run: |
@@ -135,6 +128,7 @@ jobs:
             /tmp/diva_srt.spv
             /tmp/diva_vert.spv
             /tmp/diva_frag.spv
+            /tmp/recompiler_triangle.ppm
             /tmp/shader-build.log
             /tmp/translate-test.log
             /tmp/vulkan-test.log

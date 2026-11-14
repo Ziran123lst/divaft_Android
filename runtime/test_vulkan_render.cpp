@@ -92,6 +92,16 @@ int main(int argc, char** argv) {
       if (rnonblack > 0) {
         std::printf("RECOMPILER_SHADER_TRIANGLE_RENDERED (%zu non-black pixels)\n", rnonblack);
         std::fflush(stdout);
+        if (FILE* pf = std::fopen("/tmp/recompiler_triangle.ppm", "wb")) {
+          std::fprintf(pf, "P6\n64 64\n255\n");
+          for (size_t i = 0; i + 3 < rpixels.size(); i += 4) {
+            std::fputc(rpixels[i], pf);
+            std::fputc(rpixels[i + 1], pf);
+            std::fputc(rpixels[i + 2], pf);
+          }
+          std::fclose(pf);
+          std::fprintf(stderr, "[test] recompiler triangle saved to /tmp/recompiler_triangle.ppm\n");
+        }
       } else {
         std::fprintf(stderr, "[warn] recompiler shader rendered but no visible pixels\n");
       }
