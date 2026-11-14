@@ -1,0 +1,19 @@
+diff --git a/FEXCore/Source/Utils/FileUtils.cpp b/FEXCore/Source/Utils/FileUtils.cpp
+index d3e62cacd..377dff4ae 100644
+--- a/FEXCore/Source/Utils/FileUtils.cpp
++++ b/FEXCore/Source/Utils/FileUtils.cpp
+@@ -9,6 +9,14 @@
+ #include <dirent.h>
+ #include <fcntl.h>
+ #include <unistd.h>
++
++#ifdef __BIONIC__
++#include <sys/syscall.h>
++// g2-android: bionic does not declare getdents64 (glibc-only); use the raw syscall.
++static inline ssize_t getdents64(int fd, void* dirp, size_t count) {
++  return static_cast<ssize_t>(syscall(SYS_getdents64, fd, dirp, count));
++}
++#endif
+ #else
+ #include <windows.h>
+ #include <winnt.h>
