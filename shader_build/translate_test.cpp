@@ -15,7 +15,8 @@
 #include <array>
 #include <span>
 
-static bool TranslateOne(const char* name, const uint32_t* code, size_t count) {
+static bool TranslateOne(const char* name, const uint32_t* code, size_t count,
+                         const char* spv_out = nullptr) {
   std::array<uint32_t, 16> user_data{};
   std::span<const uint32_t> code_span(code, count);
   Shader::ShaderParams params{
@@ -50,6 +51,14 @@ static bool TranslateOne(const char* name, const uint32_t* code, size_t count) {
   std::fprintf(stderr, "%s: SPIR-V words=%zu magic=0x%08x version=0x%08x -> %s\n", name,
                spv.size(), spv[0], spv[1], ok ? "OK" : "FAIL");
   std::fflush(stderr);
+  if (ok && spv_out) {
+    if (FILE* f = std::fopen(spv_out, "wb")) {
+      std::fwrite(spv.data(), sizeof(uint32_t), spv.size(), f);
+      std::fclose(f);
+      std::fprintf(stderr, "%s: SPIR-V dumped to %s\n", name, spv_out);
+      std::fflush(stderr);
+    }
+  }
   return ok;
 }
 
@@ -59,13 +68,13 @@ int main() {
 
   // 用例1：最简 compute shader（S_ENDPGM）。
   const uint32_t minimal[] = {0xBF810000u};
-  bool ok1 = TranslateOne("minimal(S_ENDPGM)", minimal, 1);
+  bool ok1 = TranslateOne("minimal(S_ENDPGM)", minimal, 1, "/tmp/diva_minimal.spv");
 
   // 用例2：S_LOAD_DWORD s20, s[0:1], offset0(imm) + S_ENDPGM。
   // SMRD: 0xC0000000 | (sdst=20)<<15 | (sbase=0)<<9 | (imm=1)<<8 | offset0 = 0xC0100100。
   // base=GetUserData(s0,s1) → SRT 根 → 触发 ARM64 解释执行 walker。
   const uint32_t srt[] = {0xC0100100u, 0xBF810000u};
-  bool ok2 = TranslateOne("srt(S_LOAD_DWORD)", srt, 2);
+  bool ok2 = TranslateOne("srt(S_LOAD_DWORD)", srt, 2, "/tmp/diva_srt.spv");
 
   if (ok1 && ok2) {
     std::printf("SHADER_TRANSLATE_TEST_PASS (GCN->SPIR-V OK, incl SRT walker)\n");
