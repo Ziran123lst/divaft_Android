@@ -16,7 +16,9 @@
 #include <span>
 
 static bool TranslateOne(const char* name, const uint32_t* code, size_t count,
-                         const char* spv_out = nullptr) {
+                         const char* spv_out = nullptr,
+                         Shader::HwStage hw = Shader::HwStage::Compute,
+                         Shader::SwStage sw = Shader::SwStage::Compute) {
   std::array<uint32_t, 16> user_data{};
   std::span<const uint32_t> code_span(code, count);
   Shader::ShaderParams params{
@@ -24,9 +26,9 @@ static bool TranslateOne(const char* name, const uint32_t* code, size_t count,
       .code = code_span,
       .hash = 0x1234,
   };
-  Shader::Info info(Shader::HwStage::Compute, Shader::SwStage::Compute, params);
+  Shader::Info info(hw, sw, params);
   Shader::RuntimeInfo runtime_info{};
-  runtime_info.Initialize(Shader::HwStage::Compute, Shader::SwStage::Compute);
+  runtime_info.Initialize(hw, sw);
   runtime_info.props.num_user_data = 16;  // EmitPrologue 据此把 s0-s15 初始化为 GetUserData（SRT 根来源）
 
   Shader::Profile profile{};
@@ -76,8 +78,36 @@ int main() {
   const uint32_t srt[] = {0xC0100100u, 0xBF810000u};
   bool ok2 = TranslateOne("srt(S_LOAD_DWORD)", srt, 2, "/tmp/diva_srt.spv");
 
-  if (ok1 && ok2) {
-    std::printf("SHADER_TRANSLATE_TEST_PASS (GCN->SPIR-V OK, incl SRT walker)\n");
+  // 用例3：最简顶点 shader——v_mov_b32 设 v0..v3=(0,0,0,1)，EXP pos0 导出位置。
+  // VOP1 v_mov_b32: 0x7E000000|(vdst<<17)|(op=1<<9)|src0=255(literal)，后随 literal dword。
+  // EXP(64bit): low=0xF8000000|(vm<<12)|(done<<11)|(target<<4)|en；high=vsrc0|vsrc1<<8|vsrc2<<16|vsrc3<<24。
+  const uint32_t vert[] = {
+      0xBEEB03FFu,                          // s_mov_b32 vcc_hi, imm（prologue）
+      0x7E0002FFu, 0x00000000u,             // v_mov_b32 v0, 0.0
+      0x7E0202FFu, 0x00000000u,             // v_mov_b32 v1, 0.0
+      0x7E0402FFu, 0x00000000u,             // v_mov_b32 v2, 0.0
+      0x7E0602FFu, 0x3F800000u,             // v_mov_b32 v3, 1.0
+      0xF80018CFu, 0x03020100u,             // exp pos0(target=12), en=0xF, vm=1, done=1, v0..v3
+      0xBF810000u,                          // s_endpgm
+  };
+  bool ok3 = TranslateOne("vertex(EXP pos0)", vert, sizeof(vert) / 4, "/tmp/diva_vert.spv",
+                          Shader::HwStage::Vertex, Shader::SwStage::Vertex);
+
+  // 用例4：最简像素 shader——v0..v3=(1,0,0,1)，EXP mrt0 导出颜色。
+  const uint32_t frag[] = {
+      0xBEEB03FFu,
+      0x7E0002FFu, 0x3F800000u,             // v0 = 1.0 (r)
+      0x7E0202FFu, 0x00000000u,             // v1 = 0.0 (g)
+      0x7E0402FFu, 0x00000000u,             // v2 = 0.0 (b)
+      0x7E0602FFu, 0x3F800000u,             // v3 = 1.0 (a)
+      0xF800080Fu, 0x03020100u,             // exp mrt0(target=0), en=0xF, done=1, v0..v3
+      0xBF810000u,
+  };
+  bool ok4 = TranslateOne("fragment(EXP mrt0)", frag, sizeof(frag) / 4, "/tmp/diva_frag.spv",
+                          Shader::HwStage::Fragment, Shader::SwStage::Fragment);
+
+  if (ok1 && ok2 && ok3 && ok4) {
+    std::printf("SHADER_TRANSLATE_TEST_PASS (GCN->SPIR-V OK: compute+SRT+vertex+fragment)\n");
     return 0;
   }
   std::printf("SHADER_TRANSLATE_TEST_FAIL\n");
