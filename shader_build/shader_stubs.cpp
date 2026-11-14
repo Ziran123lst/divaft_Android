@@ -16,7 +16,10 @@ std::shared_ptr<EmulatorSettingsImpl> EmulatorSettingsImpl::GetInstance() {
   static std::mutex mu;
   static std::shared_ptr<EmulatorSettingsImpl> inst;
   std::lock_guard<std::mutex> lk(mu);
-  if (!inst) inst = std::make_shared<EmulatorSettingsImpl>();
+  if (!inst) {
+    inst = std::make_shared<EmulatorSettingsImpl>();
+    inst->SetDumpShaders(true);  // 诊断：dump IR 到 ShaderDir/dumps，定位顶点索引 prologue 消除点
+  }
   return inst;
 }
 
