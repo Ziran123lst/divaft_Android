@@ -412,6 +412,66 @@ static bool RunSelfTests() {
                 "heap_call", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
+  // RFLAGS 保持：veneer syscall 返回后 RFLAGS bit1 必须为 1（启动崩溃现场 RFLAGS=0）。
+  {
+    ++total;
+    uint64_t fv = bridge.ExposeHost("flags_probe",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t {
+          return 42;
+        });
+    uint64_t code_addr = base + 0x1c000;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 7, 7);                    // rdi=7
+    MovRegImm64(c, 6, 5);                    // rsi=5
+    EmitCallRel32(c, code_addr, fv);         // call veneer
+    Emit(c, {0x9C});                         // pushfq
+    Emit(c, {0x58});                         // pop rax
+    Emit(c, {0xF4});                         // hlt
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = (got & 0x2) != 0;              // RFLAGS bit1（保留位，恒 1）
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (flags=0x%llx)\n",
+                "sys_flags", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
+  // 启动序列复现：init_env→atexit×2→new×2（不同 ID veneer、间接 call，同启动崩溃序列）。
+  // 真实启动在第二次 new 的 syscall 返回处崩（faultaddr=0, RFLAGS=0）。
+  {
+    ++total;
+    uint64_t v_env = bridge.ExposeHost("boot_env",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return 0; });
+    uint64_t v_at = bridge.ExposeHost("boot_atexit",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return 0; });
+    static uint64_t new_ret = 0x1decd0b0;
+    uint64_t v_new = bridge.ExposeHost("boot_new",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t {
+          uint64_t r = new_ret; new_ret += 0x90; return r;
+        });
+    uint64_t got_addr = base + 0x1d000;
+    uint64_t code_addr = base + 0x1e000;
+    auto* got = reinterpret_cast<uint64_t*>(got_addr);
+    got[0] = v_env; got[1] = v_at; got[2] = v_new;
+    std::vector<uint8_t> c;
+    auto IndCall = [&](int slot) {
+      Emit(c, {0x48, 0xA1});                 // mov rax, [moffs64]
+      uint64_t a = got_addr + slot * 8;
+      for (int b = 0; b < 8; ++b) c.push_back((a >> (b * 8)) & 0xFF);
+      Emit(c, {0xFF, 0xD0});                 // call rax
+    };
+    IndCall(0);                              // _init_env
+    IndCall(1); IndCall(1);                  // atexit ×2
+    MovRegImm64(c, 7, 0x70); IndCall(2);     // new(0x70)
+    MovRegImm64(c, 7, 0x70); IndCall(2);     // new(0x70) 再次 → 启动在此崩
+    Emit(c, {0xF4});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t r = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = r == 0x1decd140;               // 第二次 new 的返回值
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x1decd140)\n",
+                "boot_seq", ok ? "PASS" : "FAIL", (unsigned long long)r);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
