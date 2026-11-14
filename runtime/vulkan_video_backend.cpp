@@ -278,10 +278,10 @@ bool VulkanVideoBackend::CreateGraphicsPipelineFromSpirv(const uint32_t* vert, s
   VkPipelineColorBlendAttachmentState cba{};
   cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-  VkPipelineColorBlendStateCreateInfo cb{};
-  cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-  cb.attachmentCount = 1;
-  cb.pAttachments = &cba;
+  VkPipelineColorBlendStateCreateInfo blend{};
+  blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  blend.attachmentCount = 1;
+  blend.pAttachments = &cba;
   VkAttachmentDescription att{};
   att.format = VK_FORMAT_R8G8B8A8_UNORM;
   att.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -317,7 +317,7 @@ bool VulkanVideoBackend::CreateGraphicsPipelineFromSpirv(const uint32_t* vert, s
   gpci.pViewportState = &vps;
   gpci.pRasterizationState = &rs;
   gpci.pMultisampleState = &ms;
-  gpci.pColorBlendState = &cb;
+  gpci.pColorBlendState = &blend;
   gpci.layout = layout;
   gpci.renderPass = rp;
   VkPipeline pipeline;
@@ -437,10 +437,10 @@ bool VulkanVideoBackend::RenderGraphicsOffscreen(uint32_t w, uint32_t h, const u
   VkPipelineColorBlendAttachmentState cba{};
   cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-  VkPipelineColorBlendStateCreateInfo cb{};
-  cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-  cb.attachmentCount = 1;
-  cb.pAttachments = &cba;
+  VkPipelineColorBlendStateCreateInfo blend{};
+  blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  blend.attachmentCount = 1;
+  blend.pAttachments = &cba;
   VkGraphicsPipelineCreateInfo gpci{};
   gpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
   gpci.stageCount = 2;
@@ -450,7 +450,7 @@ bool VulkanVideoBackend::RenderGraphicsOffscreen(uint32_t w, uint32_t h, const u
   gpci.pViewportState = &vps;
   gpci.pRasterizationState = &rs;
   gpci.pMultisampleState = &ms;
-  gpci.pColorBlendState = &cb;
+  gpci.pColorBlendState = &blend;
   gpci.layout = layout;
   gpci.renderPass = rp;
   VkPipeline pipeline;
