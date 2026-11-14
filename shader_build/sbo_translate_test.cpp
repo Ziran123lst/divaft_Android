@@ -112,10 +112,21 @@ static bool TranslateOne(const std::string& name, const uint32_t* code, size_t c
   runtime_info.props.num_user_data = 16;
   if (hw == Shader::HwStage::Fragment) {
     // DIVA FS 主用 fp16 压缩导出（EXP.compr=1）；按指令流自适应，避免压缩/非压缩格式错配。
-    const auto fmt = HasCompressedExport(code, count)
-                         ? AmdGpu::ShaderExportFormat::ABGR_FP16
-                         : AmdGpu::ShaderExportFormat::ABGR_32;
+    // EXP target=8 为深度导出（IR::Attribute::Depth），需配 z_export_format/mrtz_mask。
+    bool has_compr = false, has_depth = false;
+    for (size_t i = 0; i < count; ++i) {
+      if ((code[i] & 0xFC000000u) == 0xF8000000u) {
+        if (code[i] & (1u << 10)) has_compr = true;
+        if (((code[i] >> 4) & 0x3F) == 8) has_depth = true;
+      }
+    }
+    const auto fmt = has_compr ? AmdGpu::ShaderExportFormat::ABGR_FP16
+                               : AmdGpu::ShaderExportFormat::ABGR_32;
     runtime_info.hw.fs.color_buffers[0].export_format = fmt;
+    if (has_depth) {
+      runtime_info.hw.fs.z_export_format = AmdGpu::ShaderExportFormat::R_32;
+      runtime_info.hw.fs.mrtz_mask = 0xF;
+    }
     // 离线默认插值配置（见文件头约定）。
     runtime_info.hw.fs.addr_flags.persp_center_ena = 1;
     runtime_info.hw.fs.addr_flags.linear_center_ena = 1;
@@ -183,7 +194,8 @@ int main(int argc, char** argv) {
     const std::string stem = p.stem().stem().string();  // 去掉 .gcn.bin
     const bool is_frag = stem.rfind("_fragment") != std::string::npos;
     const bool is_vert = stem.rfind("_vertex") != std::string::npos;
-    if (!is_frag && !is_vert) {
+    const bool is_comp = stem.rfind("_compute") != std::string::npos;
+    if (!is_frag && !is_vert && !is_comp) {
       std::fprintf(stderr, "SKIP %s (unknown stage)\n", rel.c_str());
       continue;
     }
@@ -203,8 +215,10 @@ int main(int argc, char** argv) {
       spv_path = outdir / fs::relative(p, root).replace_extension(".spv");
       fs::create_directories(spv_path.parent_path());
     }
-    const auto hw = is_frag ? Shader::HwStage::Fragment : Shader::HwStage::Vertex;
-    const auto sw = is_frag ? Shader::SwStage::Fragment : Shader::SwStage::Vertex;
+    const auto hw = is_frag ? Shader::HwStage::Fragment
+                    : is_vert ? Shader::HwStage::Vertex : Shader::HwStage::Compute;
+    const auto sw = is_frag ? Shader::SwStage::Fragment
+                    : is_vert ? Shader::SwStage::Vertex : Shader::SwStage::Compute;
 
     std::fflush(nullptr);
     const pid_t pid = fork();
