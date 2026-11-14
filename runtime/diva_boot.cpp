@@ -629,6 +629,51 @@ static bool RunSelfTests() {
                 "caller_novx", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
+  // 隔离A：push 帧 + 调用普通 guest 子程序（无 syscall）+ ret。测 push 帧下 call/ret 本身。
+  {
+    ++total;
+    uint64_t code_addr = base + 0x27000;
+    std::vector<uint8_t> c;
+    Emit(c, {0x53});                          // push rbx
+    Emit(c, {0x55});                          // push rbp
+    c.push_back(0xE8); size_t rel_off = c.size(); c.insert(c.end(), {0,0,0,0});  // call sub
+    Emit(c, {0x5D});                          // pop rbp
+    Emit(c, {0x5B});                          // pop rbx
+    Emit(c, {0xF4});                          // hlt
+    size_t sub_off = c.size();
+    MovRaxImm64(c, 42);                       // sub: mov rax, 42
+    Emit(c, {0xC3});                          // ret
+    int32_t rel = (int32_t)(sub_off - (rel_off + 4));
+    std::memcpy(c.data() + rel_off, &rel, 4);
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 42;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x2a)\n",
+                "push_plainret", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
+  // 隔离B：最小 push 帧（push rbx）+ syscall veneer + pop。测 push 帧 + syscall 交互。
+  {
+    ++total;
+    uint64_t pv = bridge.ExposeHost("push_sys_probe",
+        [](const uint64_t* a, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return a[0] + a[1]; });
+    uint64_t code_addr = base + 0x28000;
+    std::vector<uint8_t> c;
+    Emit(c, {0x53});                          // push rbx
+    MovRegImm64(c, 7, 7);
+    MovRegImm64(c, 6, 5);
+    EmitCallRel32(c, code_addr, pv);          // call veneer → rax=12
+    Emit(c, {0x5B});                          // pop rbx
+    Emit(c, {0xF4});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 12;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0xc)\n",
+                "push1_sys", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
