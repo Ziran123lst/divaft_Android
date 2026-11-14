@@ -339,6 +339,8 @@ static void GenerateSrtProgram(Info& info, PassInfo& pi) {
     if (pi.srt_roots.empty()) {
         return;
     }
+    LOG_WARNING(Render_Recompiler, "ARM64 SRT: building interpretive walker, {} root(s)",
+                pi.srt_roots.size());
     auto prog = std::make_shared<WalkerProgram>();
     u16 dst_off = NUM_USER_DATA_REGS;
     for (const auto& [sgpr_base, root] : pi.srt_roots) {
