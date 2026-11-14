@@ -34,6 +34,24 @@ std::string GetCurrentThreadName() {
 }
 }  // namespace Common
 
+// shadPS4 main 新增：path_util 的 FindGameByID 引用 zar 归档接口。
+// 独立 shader 构建不读游戏归档：IsZArchiveFile 照抄原实现，ReadGameFile 桩返回空。
+#include <filesystem>
+#include <optional>
+#include <vector>
+#include <string_view>
+#include <cstdint>
+namespace Core::FileSys {
+bool IsZArchiveFile(const std::filesystem::path& path) {
+  std::error_code ec;
+  return path.extension() == ".zar" && std::filesystem::is_regular_file(path, ec) && !ec;
+}
+std::optional<std::vector<std::uint8_t>> ReadGameFile(const std::filesystem::path&,
+                                                      std::string_view) {
+  return std::nullopt;
+}
+}  // namespace Core::FileSys
+
 #ifdef __ANDROID__
 // qemu 静态测试剔除 -llog（仅动态版）；若 spdlog/基础设施引用安卓日志符号，由此桩解析。
 #include <cstdarg>

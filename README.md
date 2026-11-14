@@ -31,6 +31,15 @@ Turnip Vulkan → Adreno
 - [ ] FEX FP bug 验证（mulsd/addpd，阶段2）
 - [ ] DIVA 启动路径 / 音频 / 渲染（阶段3-4）
 
+### 阶段3 图形进展（2026-11-14）
+
+- [x] **shader.sbo 容器逆向**：23 材质 × 131 对 VS/FS = 262 shader，PC(DXBC)/PS4(GCN) 双版全量提取
+      （`scripts/sbo_extract.py`，格式文档 `docs/sbo-format.md`）
+- [x] **真实游戏 shader 全量转 Vulkan**：262/262 GCN→IR→SPIR-V 成功 + 262/262 spirv-val 通过
+      （`shader_build/sbo_translate_test.cpp`，x86 离线验证；含 fetch shader 合成、
+      fp16 压缩导出自适应、插值离线配置）
+- [ ] 真机运行时接真实 PM4/SPI 状态与 guest fetch 指针 → Turnip 执行
+
 ## 构建（本机验证加载器）
 
 ```bash
