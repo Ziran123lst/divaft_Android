@@ -235,10 +235,41 @@ bool VulkanVideoBackend::CreateGraphicsPipelineFromSpirv(const uint32_t* vert, s
     SetLastError("fragment vkCreateShaderModule failed");
     return false;
   }
+  // 重编译器 shader 接口：push constant(AuxData,56B) + descriptor set0 两个 storage buffer
+  // (clip_planes binding0 / srt_flatbuf binding1)。空 layout 会令 lavapipe 建管线崩溃，须匹配。
+  VkDescriptorSetLayoutBinding bindings[2]{};
+  bindings[0].binding = 0;
+  bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  bindings[0].descriptorCount = 1;
+  bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  bindings[1].binding = 1;
+  bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  bindings[1].descriptorCount = 1;
+  bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  VkDescriptorSetLayoutCreateInfo dslci{};
+  dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  dslci.bindingCount = 2;
+  dslci.pBindings = bindings;
+  VkDescriptorSetLayout set_layout;
+  if (vkCreateDescriptorSetLayout(device_, &dslci, nullptr, &set_layout) != VK_SUCCESS) {
+    vkDestroyShaderModule(device_, vm, nullptr);
+    vkDestroyShaderModule(device_, fm, nullptr);
+    SetLastError("graphics vkCreateDescriptorSetLayout failed");
+    return false;
+  }
+  VkPushConstantRange pc_range{};
+  pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  pc_range.offset = 0;
+  pc_range.size = 128;  // 覆盖 AuxData(56B)
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.setLayoutCount = 1;
+  plci.pSetLayouts = &set_layout;
+  plci.pushConstantRangeCount = 1;
+  plci.pPushConstantRanges = &pc_range;
   VkPipelineLayout layout;
   if (vkCreatePipelineLayout(device_, &plci, nullptr, &layout) != VK_SUCCESS) {
+    vkDestroyDescriptorSetLayout(device_, set_layout, nullptr);
     vkDestroyShaderModule(device_, vm, nullptr);
     vkDestroyShaderModule(device_, fm, nullptr);
     SetLastError("graphics vkCreatePipelineLayout failed");
@@ -304,6 +335,7 @@ bool VulkanVideoBackend::CreateGraphicsPipelineFromSpirv(const uint32_t* vert, s
   if (vkCreateRenderPass(device_, &rpci, nullptr, &rp) != VK_SUCCESS) {
     SetLastError("vkCreateRenderPass failed");
     vkDestroyPipelineLayout(device_, layout, nullptr);
+    vkDestroyDescriptorSetLayout(device_, set_layout, nullptr);
     vkDestroyShaderModule(device_, vm, nullptr);
     vkDestroyShaderModule(device_, fm, nullptr);
     return false;
@@ -324,6 +356,7 @@ bool VulkanVideoBackend::CreateGraphicsPipelineFromSpirv(const uint32_t* vert, s
   VkResult res = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gpci, nullptr, &pipeline);
   vkDestroyRenderPass(device_, rp, nullptr);
   vkDestroyPipelineLayout(device_, layout, nullptr);
+  vkDestroyDescriptorSetLayout(device_, set_layout, nullptr);
   vkDestroyShaderModule(device_, vm, nullptr);
   vkDestroyShaderModule(device_, fm, nullptr);
   if (res != VK_SUCCESS) {
