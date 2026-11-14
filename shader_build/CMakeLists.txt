@@ -19,6 +19,9 @@ add_subdirectory("${SHADPS4}/externals/fmt" "${CMAKE_BINARY_DIR}/fmt" EXCLUDE_FR
 set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory("${SHADPS4}/externals/zydis" "${CMAKE_BINARY_DIR}/zydis" EXCLUDE_FROM_ALL)
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory("${SHADPS4}/externals/spdlog" "${CMAKE_BINARY_DIR}/spdlog" EXCLUDE_FROM_ALL)
 
 # ---- shader_recompiler 源 ----
 file(GLOB_RECURSE SHADER_SRCS CONFIGURE_DEPENDS "${SHADPS4}/src/shader_recompiler/*.cpp")
@@ -58,14 +61,13 @@ target_include_directories(divaft_shader_recompiler PRIVATE
   "${SHADPS4}/externals/json/include"
   "${SHADPS4}/externals/xbyak"
 )
-target_link_libraries(divaft_shader_recompiler PRIVATE sirit fmt::fmt Zydis::Zydis)
+target_link_libraries(divaft_shader_recompiler PRIVATE sirit fmt::fmt Zydis::Zydis spdlog::spdlog)
 target_compile_options(divaft_shader_recompiler PRIVATE -Wno-everything)
-target_compile_definitions(divaft_shader_recompiler PRIVATE SPDLOG_HEADER_ONLY)
 message(STATUS "shader_recompiler sources: ${SHADER_SRCS}")
 
 # 端到端验证：GCN shader → SPIR-V（shaders→Vulkan 核心管线实跑）
 add_executable(shader_translate_test "${CMAKE_CURRENT_SOURCE_DIR}/translate_test.cpp")
-target_link_libraries(shader_translate_test PRIVATE divaft_shader_recompiler)
+target_link_libraries(shader_translate_test PRIVATE divaft_shader_recompiler spdlog::spdlog)
 target_include_directories(shader_translate_test PRIVATE
   "${SHADPS4}" "${SHADPS4}/src"
   "${SHADPS4}/externals/sirit/include" "${SHADPS4}/externals/fmt/include"
@@ -77,4 +79,4 @@ target_include_directories(shader_translate_test PRIVATE
   "${SHADPS4}/externals/xbyak"
 )
 target_compile_options(shader_translate_test PRIVATE -Wno-everything)
-target_compile_definitions(shader_translate_test PRIVATE SPDLOG_HEADER_ONLY)
+# spdlog 以编译库模式统一（spdlog::spdlog 传播 SPDLOG_COMPILED_LIB）；不再定义 SPDLOG_HEADER_ONLY，避免与库模式冲突导致链接缺符号。

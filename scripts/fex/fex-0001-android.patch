@@ -1,24 +1,29 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: divaft <divaft@local>
-Subject: [PATCH] g2-android: FEXCore-only Android build (bionic/libc++) + getdents64 shim (rebased FEX-2611.1)
+From 725b1b5340b28d797c02bdd316c4b9372a32dd89 Mon Sep 17 00:00:00 2001
+From: revvv991 <345025393+revvv991@users.noreply.github.com>
+Subject: [PATCH] g2-android: build FEXCore/Common for Android (bionic,
+ libc++); FEXCore-only smoke target (from Bachata S4)
 
 ---
+ CMakeLists.txt                             | 55 ++++++++++++++++++++--
+ FEXCore/include/FEXCore/fextl/functional.h |  4 ++
+ 2 files changed, 56 insertions(+), 3 deletions(-)
+
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 89765883f..c2d455633 100644
+index 1d848401c..0ac8e308e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -10,6 +10,10 @@ option(BUILD_THUNKS "Build thunks" FALSE)
- option(ENABLE_CLANG_THUNKS "Build thunks with clang" TRUE)
- 
+@@ -7,6 +7,10 @@ check_include_files("gdb/jit-reader.h" HAVE_GDB_JIT_READER_H)
+ option(BUILD_FEX_LINUX_TESTS "Build FEXLinuxTests (requires x86 compiler)" FALSE)
+ option(BUILD_THUNKS "Build thunks" FALSE)
  option(BUILD_FEXCONFIG "Build FEXConfig" TRUE)
 +option(BUILD_FEXCORE_ONLY "Build only FEXCore and an embedding smoke executable" OFF)
 +set(FEXCORE_SMOKE_SOURCE "" CACHE FILEPATH "Embedding smoke executable source")
 +set(FEXCORE_GUEST_HARNESS_SOURCES "" CACHE STRING "Semicolon-separated absolute guest harness sources")
 +set(FEXCORE_PROJECT_SOURCE_DIR "" CACHE PATH "Embedding project source directory")
+ option(ENABLE_CLANG_THUNKS "Build thunks with clang" TRUE)
  option(ENABLE_IWYU "Enable the Include What You Use sanitizer" FALSE)
  option(ENABLE_LTO "Enable LTO with compilation" TRUE)
- option(ENABLE_COVERAGE "Enable Code Coverage" FALSE)
-@@ -90,7 +94,7 @@ if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+@@ -61,7 +65,7 @@ if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
    message(FATAL_ERROR "Unsupported pointer size ${CMAKE_SIZEOF_VOID_P}."
      " FEX only supports 64-bit (8-byte pointer) systems."
      " If you believe this is in error, file an issue.")
@@ -27,7 +32,20 @@ index 89765883f..c2d455633 100644
    message(FATAL_ERROR "Unsupported system type ${CMAKE_SYSTEM_NAME}."
      " FEX only supports Linux and Windows."
      " If you believe this is in error, file an issue.")
-@@ -696,7 +700,48 @@ add_subdirectory(External/SoftFloat-3e/)
+@@ -275,7 +279,11 @@ if (ENABLE_COMPILE_TIME_TRACE)
+   link_libraries(-ftime-trace)
+ endif()
+ 
+-set(PTHREAD_LIB pthread)
++if (ANDROID)
++  set(PTHREAD_LIB "") # g2-android: pthread is part of bionic libc
++else()
++  set(PTHREAD_LIB pthread)
++endif()
+ 
+ if (USE_LINKER)
+   message(STATUS "Overriding linker to: ${USE_LINKER}")
+@@ -599,7 +607,48 @@ add_subdirectory(External/SoftFloat-3e/)
  add_subdirectory(External/cephes/)
  add_subdirectory(FEXHeaderUtils/)
  add_subdirectory(CodeEmitter/)
@@ -50,7 +68,7 @@ index 89765883f..c2d455633 100644
 +    "${CMAKE_BINARY_DIR}/generated"
 +    "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
 +  target_link_libraries(fexcore-smoke PRIVATE
-+    FEXCore Common CommonTools JemallocLibs Threads::Threads)
++    FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
 +  if (FEXCORE_GUEST_HARNESS_SOURCES)
 +    if (NOT IS_ABSOLUTE "${FEXCORE_PROJECT_SOURCE_DIR}" OR NOT IS_DIRECTORY "${FEXCORE_PROJECT_SOURCE_DIR}")
 +      message(FATAL_ERROR "FEXCORE_PROJECT_SOURCE_DIR must be an absolute source directory")
@@ -67,7 +85,7 @@ index 89765883f..c2d455633 100644
 +      "${CMAKE_BINARY_DIR}/generated"
 +      "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
 +    target_link_libraries(fexcore-guest-harness PRIVATE
-+      FEXCore Common CommonTools JemallocLibs Threads::Threads)
++      FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
 +    install(TARGETS fexcore-smoke fexcore-guest-harness RUNTIME DESTINATION bin)
 +  else()
 +    install(TARGETS fexcore-smoke RUNTIME DESTINATION bin)
@@ -77,32 +95,16 @@ index 89765883f..c2d455633 100644
  
  if (ARCHITECTURE_arm64 AND NOT MINGW AND NOT BUILD_STEAM_SUPPORT)
    # Binfmt_misc files must be installed prior to Source/ installs
-diff --git a/FEXCore/Source/Utils/FileUtils.cpp b/FEXCore/Source/Utils/FileUtils.cpp
-index d3e62cacd..88f6ea118 100644
---- a/FEXCore/Source/Utils/FileUtils.cpp
-+++ b/FEXCore/Source/Utils/FileUtils.cpp
-@@ -9,6 +9,13 @@
- #include <dirent.h>
- #include <fcntl.h>
- #include <unistd.h>
-+#ifdef __ANDROID__
-+#include <sys/syscall.h>
-+// g2-android: bionic 不声明 getdents64，经 syscall 提供
-+static inline ssize_t getdents64(int fd, void* buf, size_t nbytes) {
-+  return static_cast<ssize_t>(syscall(SYS_getdents64, fd, buf, nbytes));
-+}
-+#endif
- #else
- #include <windows.h>
- #include <winnt.h>
 diff --git a/FEXCore/include/FEXCore/fextl/functional.h b/FEXCore/include/FEXCore/fextl/functional.h
-index 8e8ed659a..ad3714fc4 100644
+index 628e5ff21..9705ed22b 100644
 --- a/FEXCore/include/FEXCore/fextl/functional.h
 +++ b/FEXCore/include/FEXCore/fextl/functional.h
-@@ -52,9 +52,11 @@ public:
+@@ -52,9 +52,13 @@ public:
  
        // Third, assign the result to std::function, ensuring it's indeed
        // allocation-free by checking for nothrow-constructibility
++      // g2-android: libc++ does not mark std::function assignment noexcept, but a single-pointer
++      // capture fits its small buffer (no allocation), which is what this check guards.
 +#ifndef _LIBCPP_VERSION
        static_assert(noexcept(internal = std::move(wrapped_lambda)), "This implementation of std::function "
                                                                      "does not support implementing "
@@ -111,6 +113,6 @@ index 8e8ed659a..ad3714fc4 100644
        internal = std::move(wrapped_lambda);
  
        // Finally, if a destructor must be called, generate a pointer to its destructor
-
 -- 
 2.43.0
+

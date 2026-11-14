@@ -218,7 +218,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   FEXCore::Config::Load();
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
   FEXCore::Config::ReloadMetaLayer();
-  auto features = FEX::FetchHostFeatures(true);  // FEX-2611: 需 Is64BitMode 参数
+  auto features = FEX::FetchHostFeatures();
   // 目标真机（骁龙 7+Gen3）无 SVE；qemu 宿主误报 SVE 会生成非法指令。强制关闭。
   features.SupportsSVE128 = false;
   features.SupportsSVE256 = false;
@@ -275,10 +275,9 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   rsp -= 8;
   *reinterpret_cast<uint64_t*>(rsp) = impl_->exit_hlt;  // 返回蹦床：ret 落 HLT 退出
 
-  auto* thread = impl_->ctx->CreateThread(nullptr);  // FEX-2611: CreateThread(CPUState*)，rip/RSP 下方手动设
+  auto* thread = impl_->ctx->CreateThread(entry, stack_top);
   if (!thread) { munmap(stack, kGuestStack); return 0; }
   auto& state = thread->CurrentFrame->State;
-  state.rip = entry;
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = impl_->gdt;
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = impl_->gdt;
   state.cs_idx = FEXCore::Core::CPUState::DEFAULT_USER_CS << 3;
