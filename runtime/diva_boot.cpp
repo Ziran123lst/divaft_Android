@@ -551,6 +551,84 @@ static bool RunSelfTests() {
                 "avx_caller", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
+  // 隔离1：无 call，纯 vxorps ymm0 后读 rcx（测 vxorps 是否单独破坏 GPR）。
+  {
+    ++total;
+    uint64_t code_addr = base + 0x24000;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 1, 0x1234);              // mov rcx, 0x1234
+    Emit(c, {0xC5, 0xFC, 0x57, 0xC0});      // vxorps ymm0, ymm0, ymm0
+    Emit(c, {0x48, 0x89, 0xC8});            // mov rax, rcx
+    Emit(c, {0xF4});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 0x1234;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x1234)\n",
+                "avx_gpr", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
+  // 隔离2：call veneer + vxorps ymm0 后读 rcx（测 call+vxorps 交互）。
+  {
+    ++total;
+    uint64_t gv = bridge.ExposeHost("gpr_probe",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return 42; });
+    uint64_t code_addr = base + 0x25000;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 1, 0x1234);              // rcx = 0x1234
+    MovRegImm64(c, 7, 7);
+    MovRegImm64(c, 6, 5);
+    EmitCallRel32(c, code_addr, gv);        // call veneer
+    Emit(c, {0xC5, 0xFC, 0x57, 0xC0});      // vxorps ymm0
+    Emit(c, {0x48, 0x89, 0xC8});            // mov rax, rcx
+    Emit(c, {0xF4});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 0x1234;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x1234)\n",
+                "avx_callgpr", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
+  // 隔离3：avx_caller 完整序列但去掉 vxorps（对照组，定位 vxorps 是否破坏因子）。
+  {
+    ++total;
+    uint64_t ret_ptr = base + 0x20800;
+    uint64_t data_addr = base + 0x1f800;
+    *reinterpret_cast<uint64_t*>(data_addr + 8) = 0xCAFE;
+    uint64_t cv = bridge.ExposeHost("caller_novx_new",
+        [ret_ptr](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return ret_ptr; });
+    uint64_t code_addr = base + 0x26000;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 7, data_addr);
+    MovRegImm64(c, 2, data_addr);
+    Emit(c, {0x55});
+    Emit(c, {0x48, 0x89, 0xE5});
+    Emit(c, {0x41, 0x57});
+    Emit(c, {0x41, 0x56});
+    Emit(c, {0x53});
+    Emit(c, {0x50});
+    Emit(c, {0x49, 0x89, 0xFF});
+    Emit(c, {0xBF, 0x70, 0x00, 0x00, 0x00});
+    Emit(c, {0x49, 0x89, 0xD6});
+    EmitCallRel32(c, code_addr, cv);
+    Emit(c, {0x49, 0x8B, 0x4F, 0x08});
+    Emit(c, {0x48, 0x89, 0xC3});
+    // 无 vxorps
+    Emit(c, {0x48, 0x89, 0x0B});
+    Emit(c, {0x48, 0x89, 0x4B, 0x08});
+    Emit(c, {0x48, 0x89, 0x4B, 0x10});
+    Emit(c, {0x66, 0xC7, 0x43, 0x18, 0x00, 0x00});
+    Emit(c, {0x48, 0x8B, 0x03});
+    Emit(c, {0xF4});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 0xCAFE;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0xcafe)\n",
+                "caller_novx", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
