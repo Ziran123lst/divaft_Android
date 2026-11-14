@@ -101,8 +101,10 @@ jobs:
           g++ -std=c++20 -O2 -I runtime/include \
             runtime/test_vulkan_render.cpp runtime/vulkan_video_backend.cpp \
             -lvulkan -o /tmp/test_vulkan_render
-          ICD=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)
+          echo "=== 可用 Vulkan ICD ==="; ls -la /usr/share/vulkan/icd.d/ || true
+          ICD=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' 2>/dev/null | head -1 || true)
           if [ -n "$ICD" ]; then export VK_ICD_FILENAMES="$ICD"; fi
+          echo "using ICD: ${VK_ICD_FILENAMES:-auto}"
           ls -la /tmp/test_vulkan_render
           set +e
           /tmp/test_vulkan_render /tmp/diva_vert.spv /tmp/diva_frag.spv /tmp/tri_vert.spv /tmp/tri_frag.spv \
