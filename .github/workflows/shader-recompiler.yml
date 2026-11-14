@@ -36,31 +36,7 @@ jobs:
         run: bash scripts/fetch-shadps4.sh
 
       - name: Patch recompiler (prologue-before-translate fix + post-first-ssa dump)
-        run: |
-          python3 - <<'PY'
-          p='third_party/shadps4/src/shader_recompiler/recompiler.cpp'
-          s=open(p).read()
-          # 修复假设：prologue 改在翻译首块之前发射（原为翻译后插块首，疑迭代器时序致 SSA 读不到 v0 定义）
-          old='''        block.ir_block = ir_block;
-        translator.Translate(ir_block, block.begin, block.cond,
-                             std::span{program.ins_list}.subspan(start, size));
-        program.blocks.push_back(ir_block);
-    }
-    translator.EmitPrologue(program.blocks.front());'''
-          new='''        block.ir_block = ir_block;
-        if (program.blocks.empty()) { translator.EmitPrologue(ir_block); }
-        translator.Translate(ir_block, block.begin, block.cond,
-                             std::span{program.ins_list}.subspan(start, size));
-        program.blocks.push_back(ir_block);
-    }'''
-          assert old in s, "prologue pattern not found"
-          s=s.replace(old,new,1)
-          # 保留 post-first-ssa dump 验证
-          needle='Shader::Optimization::SsaRewritePass(program);'
-          s=s.replace(needle, needle+'\n    Shader::IR::DumpProgram(program, info, "post-first-ssa.");',1)
-          open(p,'w').write(s)
-          print("patched: prologue before translate + post-first-ssa dump")
-          PY
+        run: python3 scripts/patch_recompiler.py
 
       - name: Configure shader_recompiler (NDK arm64-v8a)
         run: |
