@@ -121,10 +121,8 @@ class VeneerSyscallHandler final : public FEXCore::HLE::SyscallHandler {
 public:
   VeneerSyscallHandler(std::unordered_map<uint32_t, Veneer>* by_id, uint64_t base, uint64_t size)
       : by_id_(by_id), base_(base), size_(size) {
-    OSABI = FEXCore::HLE::SyscallOSABI::OS_GENERIC;
   }
-  uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* Frame,
-                         FEXCore::HLE::SyscallArguments* Args) override {
+  void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
     auto& gregs = Frame->State.gregs;
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
     std::fprintf(stderr, "[sys-entry] id=%u rsp=0x%llx rip=0x%llx\n", id,
@@ -161,7 +159,6 @@ public:
       Frame->State.xmm.sse.data[0][0] = hret.xmm0;
       Frame->State.xmm.sse.data[1][0] = hret.xmm1;
     }
-    return ret;
   }
   FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(
       FEXCore::Core::InternalThreadState*, uint64_t) override {
@@ -236,7 +233,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   FEXCore::Config::Load();
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
   FEXCore::Config::ReloadMetaLayer();
-  auto features = FEX::FetchHostFeatures();
+  auto features = FEX::FetchHostFeatures(true);
   // 目标真机（骁龙 7+Gen3）无 SVE；qemu 宿主误报 SVE 会生成非法指令。强制关闭。
   features.SupportsSVE128 = false;
   features.SupportsSVE256 = false;
@@ -293,9 +290,10 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   rsp -= 8;
   *reinterpret_cast<uint64_t*>(rsp) = impl_->exit_hlt;  // 返回蹦床：ret 落 HLT 退出
 
-  auto* thread = impl_->ctx->CreateThread(entry, stack_top);
+  auto* thread = impl_->ctx->CreateThread(nullptr);
   if (!thread) { munmap(stack, kGuestStack); return 0; }
   auto& state = thread->CurrentFrame->State;
+  state.rip = entry;  // new FEX: CreateThread no longer takes entry
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = impl_->gdt;
   state.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = impl_->gdt;
   state.cs_idx = FEXCore::Core::CPUState::DEFAULT_USER_CS << 3;
