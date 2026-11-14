@@ -51,6 +51,11 @@ public:
   // 仅验证 vertex+fragment SPIR-V 能建成图形管线（不渲染）。
   bool CreateGraphicsPipelineFromSpirv(const uint32_t* vert, size_t vert_words,
                                        const uint32_t* frag, size_t frag_words);
+  // 用重编译器 graphics SPIR-V 实际离屏渲染：匹配 layout(push constant+2 storage buffer)，
+  // 绑定零填充 descriptor set + push constant，draw(3)，读回 RGBA。验证逐顶点三角形。
+  bool RenderRecompilerGraphicsOffscreen(uint32_t w, uint32_t h, const uint32_t* vert,
+                                         size_t vert_words, const uint32_t* frag,
+                                         size_t frag_words, std::vector<uint8_t>& out_rgba);
   // 是否已就绪（instance/device/queue 建立）。
   bool ready() const { return ready_; }
   // 最近一次错误描述（诊断）。

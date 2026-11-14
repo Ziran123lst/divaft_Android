@@ -84,19 +84,25 @@ int main() {
   const uint32_t srt[] = {0xC0100100u, 0xBF810000u};
   bool ok2 = TranslateOne("srt(S_LOAD_DWORD)", srt, 2, "/tmp/diva_srt.spv");
 
-  // 用例3：最简顶点 shader——v_mov_b32 设 v0..v3=(0,0,0,1)，EXP pos0 导出位置。
-  // VOP1 v_mov_b32: 0x7E000000|(vdst<<17)|(op=1<<9)|src0=255(literal)，后随 literal dword。
-  // EXP(64bit): low=0xF8000000|(vm<<12)|(done<<11)|(target<<4)|en；high=vsrc0|vsrc1<<8|vsrc2<<16|vsrc3<<24。
+  // 用例3：逐顶点顶点 shader——v0=顶点索引(EmitPrologue自动设)，抛物线算位置：
+  // x=float(v0)-1 (-1,0,1)，y=2x²-1 (1,-1,1)，pos=(0.5x,0.5y,0,1)→三角形(-0.5,0.5)(0,-0.5)(0.5,0.5)。
+  // VOP2=(op<<25)|(vdst<<17)|(vsrc1<<9)|src0；VOP1=0x7E000000|(vdst<<17)|(op<<9)|src0。
+  // 内联常量:0.5=240,1.0=242,-1.0=243,2.0=244,0=128；VGPR vN src0=256+N。
   const uint32_t vert[] = {
-      0xBEEB03FFu,                          // s_mov_b32 vcc_hi, imm（prologue）
-      0x7E0002FFu, 0x00000000u,             // v_mov_b32 v0, 0.0
-      0x7E0202FFu, 0x00000000u,             // v_mov_b32 v1, 0.0
-      0x7E0402FFu, 0x00000000u,             // v_mov_b32 v2, 0.0
-      0x7E0602FFu, 0x3F800000u,             // v_mov_b32 v3, 1.0
-      0xF80018CFu, 0x03020100u,             // exp pos0(target=12), en=0xF, vm=1, done=1, v0..v3
-      0xBF810000u,                          // s_endpgm
+      0xBEEB03FFu,              // s_mov_b32 vcc_hi, imm（prologue）
+      0x7E020D00u,              // v_cvt_f32_u32 v1, v0      ; v1=float(vertex_index)
+      0x060402F3u,              // v_add_f32 v2, -1.0, v1    ; x=v1-1
+      0x10060502u,              // v_mul_f32 v3, v2, v2      ; x*x
+      0x100606F4u,              // v_mul_f32 v3, 2.0, v3     ; 2*x*x
+      0x060606F3u,              // v_add_f32 v3, -1.0, v3    ; y=2*x*x-1
+      0x100804F0u,              // v_mul_f32 v4, 0.5, v2     ; pos.x=0.5x
+      0x100A06F0u,              // v_mul_f32 v5, 0.5, v3     ; pos.y=0.5y
+      0x7E0C0280u,              // v_mov_b32 v6, 0.0         ; pos.z=0
+      0x7E0E02F2u,              // v_mov_b32 v7, 1.0         ; pos.w=1
+      0xF80018CFu, 0x07060504u, // exp pos0, v4,v5,v6,v7 (vm=1,done=1,target=12,en=0xF)
+      0xBF810000u,              // s_endpgm
   };
-  bool ok3 = TranslateOne("vertex(EXP pos0)", vert, sizeof(vert) / 4, "/tmp/diva_vert.spv",
+  bool ok3 = TranslateOne("vertex(per-vertex parabola)", vert, sizeof(vert) / 4, "/tmp/diva_vert.spv",
                           Shader::HwStage::Vertex, Shader::SwStage::Vertex);
 
   // 用例4：最简像素 shader——v0..v3=(1,0,0,1)，EXP mrt0 导出颜色。

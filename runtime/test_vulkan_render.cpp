@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
   std::printf("VULKAN_RENDER_TEST_PASS (triangle rendered, %zu non-black pixels)\n", nonblack);
   std::fflush(stdout);
 
-  // 附加证明：重编译器 graphics SPIR-V → 图形管线（lavapipe 可能崩溃，不影响上面的主证明）。
+  // 附加证明：重编译器 graphics SPIR-V 实际渲染逐顶点三角形（匹配 layout + 绑 descriptor/push constant）。
   std::vector<uint32_t> rv, rf;
   if (LoadSpv(rec_vert, rv) && LoadSpv(rec_frag, rf)) {
     std::fprintf(stderr, "[ckpt] loaded recompiler vert=%zu frag=%zu, before CreateGraphicsPipeline\n",
@@ -77,6 +77,26 @@ int main(int argc, char** argv) {
       std::fflush(stdout);
     } else {
       std::fprintf(stderr, "[warn] recompiler graphics pipeline rejected: %s\n", backend.last_error());
+    }
+    std::vector<uint8_t> rpixels;
+    if (backend.RenderRecompilerGraphicsOffscreen(64, 64, rv.data(), rv.size(), rf.data(), rf.size(),
+                                                  rpixels)) {
+      size_t rnonblack = 0;
+      for (size_t i = 0; i + 3 < rpixels.size(); i += 4) {
+        if (rpixels[i] || rpixels[i + 1] || rpixels[i + 2]) {
+          ++rnonblack;
+        }
+      }
+      std::fprintf(stderr, "[test] recompiler shader rendered 64x64, non-black pixels=%zu / %zu\n",
+                   rnonblack, rpixels.size() / 4);
+      if (rnonblack > 0) {
+        std::printf("RECOMPILER_SHADER_TRIANGLE_RENDERED (%zu non-black pixels)\n", rnonblack);
+        std::fflush(stdout);
+      } else {
+        std::fprintf(stderr, "[warn] recompiler shader rendered but no visible pixels\n");
+      }
+    } else {
+      std::fprintf(stderr, "[warn] recompiler offscreen render failed: %s\n", backend.last_error());
     }
   }
   return 0;

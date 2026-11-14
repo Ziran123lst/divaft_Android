@@ -624,4 +624,330 @@ bool VulkanVideoBackend::RenderGraphicsOffscreen(uint32_t w, uint32_t h, const u
   return true;
 }
 
+bool VulkanVideoBackend::RenderRecompilerGraphicsOffscreen(uint32_t w, uint32_t h,
+                                                           const uint32_t* vert, size_t vert_words,
+                                                           const uint32_t* frag, size_t frag_words,
+                                                           std::vector<uint8_t>& out_rgba) {
+  if (!ready_) {
+    SetLastError("backend not initialized");
+    return false;
+  }
+  // shader modules
+  VkShaderModuleCreateInfo vmci{};
+  vmci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  vmci.codeSize = vert_words * 4;
+  vmci.pCode = vert;
+  VkShaderModule vm;
+  if (vkCreateShaderModule(device_, &vmci, nullptr, &vm) != VK_SUCCESS) {
+    SetLastError("rec-render: vertex module failed");
+    return false;
+  }
+  VkShaderModuleCreateInfo fmci{};
+  fmci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  fmci.codeSize = frag_words * 4;
+  fmci.pCode = frag;
+  VkShaderModule fm;
+  if (vkCreateShaderModule(device_, &fmci, nullptr, &fm) != VK_SUCCESS) {
+    vkDestroyShaderModule(device_, vm, nullptr);
+    SetLastError("rec-render: fragment module failed");
+    return false;
+  }
+  // 匹配 layout：descriptor set0 两个 storage buffer + push constant(128B)。
+  VkDescriptorSetLayoutBinding bindings[2]{};
+  for (int i = 0; i < 2; ++i) {
+    bindings[i].binding = i;
+    bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[i].descriptorCount = 1;
+    bindings[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  }
+  VkDescriptorSetLayoutCreateInfo dslci{};
+  dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  dslci.bindingCount = 2;
+  dslci.pBindings = bindings;
+  VkDescriptorSetLayout set_layout;
+  if (vkCreateDescriptorSetLayout(device_, &dslci, nullptr, &set_layout) != VK_SUCCESS) {
+    SetLastError("rec-render: descriptor set layout failed");
+    vkDestroyShaderModule(device_, vm, nullptr);
+    vkDestroyShaderModule(device_, fm, nullptr);
+    return false;
+  }
+  VkPushConstantRange pc_range{};
+  pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  pc_range.size = 128;
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.setLayoutCount = 1;
+  plci.pSetLayouts = &set_layout;
+  plci.pushConstantRangeCount = 1;
+  plci.pPushConstantRanges = &pc_range;
+  VkPipelineLayout layout;
+  vkCreatePipelineLayout(device_, &plci, nullptr, &layout);
+  // 两个零填充 storage buffer（clip_planes / srt_flatbuf）。
+  VkBuffer bufs[2];
+  VkDeviceMemory buf_mems[2];
+  for (int i = 0; i < 2; ++i) {
+    VkBufferCreateInfo bci{};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = 256;
+    bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    vkCreateBuffer(device_, &bci, nullptr, &bufs[i]);
+    VkMemoryRequirements mr;
+    vkGetBufferMemoryRequirements(device_, bufs[i], &mr);
+    VkMemoryAllocateInfo mai{};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = mr.size;
+    mai.memoryTypeIndex = FindMemoryType(physical_, mr.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkAllocateMemory(device_, &mai, nullptr, &buf_mems[i]);
+    vkBindBufferMemory(device_, bufs[i], buf_mems[i], 0);
+    void* p = nullptr;
+    vkMapMemory(device_, buf_mems[i], 0, 256, 0, &p);
+    std::memset(p, 0, 256);
+    vkUnmapMemory(device_, buf_mems[i]);
+  }
+  // descriptor pool + set
+  VkDescriptorPoolSize pool_size{};
+  pool_size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  pool_size.descriptorCount = 2;
+  VkDescriptorPoolCreateInfo dpci{};
+  dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  dpci.maxSets = 1;
+  dpci.poolSizeCount = 1;
+  dpci.pPoolSizes = &pool_size;
+  VkDescriptorPool pool;
+  vkCreateDescriptorPool(device_, &dpci, nullptr, &pool);
+  VkDescriptorSetAllocateInfo dsai{};
+  dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  dsai.descriptorPool = pool;
+  dsai.descriptorSetCount = 1;
+  dsai.pSetLayouts = &set_layout;
+  VkDescriptorSet desc_set;
+  vkAllocateDescriptorSets(device_, &dsai, &desc_set);
+  VkDescriptorBufferInfo buf_infos[2]{};
+  VkWriteDescriptorSet writes[2]{};
+  for (int i = 0; i < 2; ++i) {
+    buf_infos[i].buffer = bufs[i];
+    buf_infos[i].range = 256;
+    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[i].dstSet = desc_set;
+    writes[i].dstBinding = i;
+    writes[i].descriptorCount = 1;
+    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[i].pBufferInfo = &buf_infos[i];
+  }
+  vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+  // render pass
+  VkAttachmentDescription att{};
+  att.format = VK_FORMAT_R8G8B8A8_UNORM;
+  att.samples = VK_SAMPLE_COUNT_1_BIT;
+  att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  att.finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+  VkSubpassDescription sub{};
+  sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  sub.colorAttachmentCount = 1;
+  sub.pColorAttachments = &ref;
+  VkSubpassDependency dep{};
+  dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+  dep.dstSubpass = 0;
+  dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  VkRenderPassCreateInfo rpci{};
+  rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  rpci.attachmentCount = 1;
+  rpci.pAttachments = &att;
+  rpci.subpassCount = 1;
+  rpci.pSubpasses = &sub;
+  rpci.dependencyCount = 1;
+  rpci.pDependencies = &dep;
+  VkRenderPass rp;
+  if (vkCreateRenderPass(device_, &rpci, nullptr, &rp) != VK_SUCCESS) {
+    SetLastError("rec-render: render pass failed");
+    return false;
+  }
+  // graphics pipeline
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vm;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fm;
+  stages[1].pName = "main";
+  VkPipelineVertexInputStateCreateInfo vi{};
+  vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  VkPipelineInputAssemblyStateCreateInfo ia{};
+  ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  VkViewport vp{0, 0, static_cast<float>(w), static_cast<float>(h), 0, 1};
+  VkRect2D sc{{0, 0}, {w, h}};
+  VkPipelineViewportStateCreateInfo vps{};
+  vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  vps.viewportCount = 1;
+  vps.pViewports = &vp;
+  vps.scissorCount = 1;
+  vps.pScissors = &sc;
+  VkPipelineRasterizationStateCreateInfo rs{};
+  rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rs.polygonMode = VK_POLYGON_MODE_FILL;
+  rs.cullMode = VK_CULL_MODE_NONE;
+  rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rs.lineWidth = 1.0f;
+  VkPipelineMultisampleStateCreateInfo ms{};
+  ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+  VkPipelineColorBlendAttachmentState cba{};
+  cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo blend{};
+  blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  blend.attachmentCount = 1;
+  blend.pAttachments = &cba;
+  VkGraphicsPipelineCreateInfo gpci{};
+  gpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  gpci.stageCount = 2;
+  gpci.pStages = stages;
+  gpci.pVertexInputState = &vi;
+  gpci.pInputAssemblyState = &ia;
+  gpci.pViewportState = &vps;
+  gpci.pRasterizationState = &rs;
+  gpci.pMultisampleState = &ms;
+  gpci.pColorBlendState = &blend;
+  gpci.layout = layout;
+  gpci.renderPass = rp;
+  VkPipeline pipeline;
+  if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gpci, nullptr, &pipeline) != VK_SUCCESS) {
+    SetLastError("rec-render: graphics pipeline failed");
+    return false;
+  }
+  // offscreen image + view + framebuffer
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_2D;
+  ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+  ici.extent = {w, h, 1};
+  ici.mipLevels = 1;
+  ici.arrayLayers = 1;
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  VkImage image;
+  vkCreateImage(device_, &ici, nullptr, &image);
+  VkMemoryRequirements imr;
+  vkGetImageMemoryRequirements(device_, image, &imr);
+  VkMemoryAllocateInfo imai{};
+  imai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  imai.allocationSize = imr.size;
+  imai.memoryTypeIndex = FindMemoryType(physical_, imr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  VkDeviceMemory img_mem;
+  vkAllocateMemory(device_, &imai, nullptr, &img_mem);
+  vkBindImageMemory(device_, image, img_mem, 0);
+  VkImageViewCreateInfo ivci{};
+  ivci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  ivci.image = image;
+  ivci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  ivci.format = VK_FORMAT_R8G8B8A8_UNORM;
+  ivci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  VkImageView view;
+  vkCreateImageView(device_, &ivci, nullptr, &view);
+  VkFramebufferCreateInfo fbci{};
+  fbci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  fbci.renderPass = rp;
+  fbci.attachmentCount = 1;
+  fbci.pAttachments = &view;
+  fbci.width = w;
+  fbci.height = h;
+  fbci.layers = 1;
+  VkFramebuffer fb;
+  vkCreateFramebuffer(device_, &fbci, nullptr, &fb);
+  // readback buffer
+  VkBufferCreateInfo rbci{};
+  rbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  rbci.size = w * h * 4;
+  rbci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  VkBuffer rbuf;
+  vkCreateBuffer(device_, &rbci, nullptr, &rbuf);
+  VkMemoryRequirements rbmr;
+  vkGetBufferMemoryRequirements(device_, rbuf, &rbmr);
+  VkMemoryAllocateInfo rbmai{};
+  rbmai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  rbmai.allocationSize = rbmr.size;
+  rbmai.memoryTypeIndex = FindMemoryType(physical_, rbmr.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VkDeviceMemory rbuf_mem;
+  vkAllocateMemory(device_, &rbmai, nullptr, &rbuf_mem);
+  vkBindBufferMemory(device_, rbuf, rbuf_mem, 0);
+  // record
+  VkCommandBufferAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  ai.commandPool = cmd_pool_;
+  ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  ai.commandBufferCount = 1;
+  VkCommandBuffer cb;
+  vkAllocateCommandBuffers(device_, &ai, &cb);
+  VkCommandBufferBeginInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cb, &bi);
+  VkClearValue clear{};
+  clear.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+  VkRenderPassBeginInfo rpbi{};
+  rpbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  rpbi.renderPass = rp;
+  rpbi.framebuffer = fb;
+  rpbi.renderArea = {{0, 0}, {w, h}};
+  rpbi.clearValueCount = 1;
+  rpbi.pClearValues = &clear;
+  vkCmdBeginRenderPass(cb, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+  vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &desc_set, 0, nullptr);
+  uint8_t pc_zero[128]{};
+  vkCmdPushConstants(cb, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128, pc_zero);
+  vkCmdDraw(cb, 3, 1, 0, 0);
+  vkCmdEndRenderPass(cb);
+  VkBufferImageCopy region{};
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  region.imageExtent = {w, h, 1};
+  vkCmdCopyImageToBuffer(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rbuf, 1, &region);
+  vkEndCommandBuffer(cb);
+  VkSubmitInfo si{};
+  si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers = &cb;
+  if (vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
+    SetLastError("rec-render: submit failed");
+    return false;
+  }
+  vkQueueWaitIdle(queue_);
+  void* mapped = nullptr;
+  vkMapMemory(device_, rbuf_mem, 0, w * h * 4, 0, &mapped);
+  out_rgba.assign(static_cast<uint8_t*>(mapped), static_cast<uint8_t*>(mapped) + w * h * 4);
+  vkUnmapMemory(device_, rbuf_mem);
+  vkFreeCommandBuffers(device_, cmd_pool_, 1, &cb);
+  vkDestroyBuffer(device_, rbuf, nullptr);
+  vkFreeMemory(device_, rbuf_mem, nullptr);
+  vkDestroyFramebuffer(device_, fb, nullptr);
+  vkDestroyImageView(device_, view, nullptr);
+  vkDestroyImage(device_, image, nullptr);
+  vkFreeMemory(device_, img_mem, nullptr);
+  vkDestroyPipeline(device_, pipeline, nullptr);
+  vkDestroyRenderPass(device_, rp, nullptr);
+  vkDestroyDescriptorPool(device_, pool, nullptr);
+  for (int i = 0; i < 2; ++i) {
+    vkDestroyBuffer(device_, bufs[i], nullptr);
+    vkFreeMemory(device_, buf_mems[i], nullptr);
+  }
+  vkDestroyPipelineLayout(device_, layout, nullptr);
+  vkDestroyDescriptorSetLayout(device_, set_layout, nullptr);
+  vkDestroyShaderModule(device_, vm, nullptr);
+  vkDestroyShaderModule(device_, fm, nullptr);
+  std::fprintf(stderr, "[vulkan-backend] recompiler graphics offscreen render %ux%u done (%zu bytes)\n",
+               w, h, out_rgba.size());
+  return true;
+}
+
 }  // namespace divaft
