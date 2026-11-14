@@ -477,7 +477,7 @@ static bool RunSelfTests() {
     ++total;
     uint64_t code_addr = base + 0x21000;
     std::vector<uint8_t> c;
-    Emit(c, {0xC5, 0xFE, 0x76, 0xC0});        // vpcmpeqd ymm0, ymm0, ymm0
+    Emit(c, {0xC5, 0xFD, 0x76, 0xC0});        // vpcmpeqd ymm0, ymm0, ymm0（修正：66前缀 pp=01→C5 FD，原 C5 FE 是 F3 非法）
     Emit(c, {0x66, 0x48, 0x0F, 0x7E, 0xC0});  // movq rax, xmm0
     Emit(c, {0xF4});
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
