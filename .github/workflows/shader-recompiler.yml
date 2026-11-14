@@ -78,6 +78,7 @@ jobs:
 
       - name: Verify graphics rendering (recompiler SPIR-V + offscreen triangle, lavapipe)
         run: |
+          set -o pipefail
           sudo apt-get install -y glslang-tools
           # 可见三角形 vertex/fragment（gl_VertexIndex，标准 GLSL→SPIR-V）。
           cat > /tmp/tri.vert <<'GLSL'
@@ -92,6 +93,11 @@ jobs:
           GLSL
           glslangValidator -V /tmp/tri.vert -o /tmp/tri_vert.spv
           glslangValidator -V /tmp/tri.frag -o /tmp/tri_frag.spv
+          echo "=== spirv-val 校验 ==="
+          spirv-val /tmp/diva_vert.spv && echo "recompiler vert VALID" || echo "recompiler vert INVALID"
+          spirv-val /tmp/diva_frag.spv && echo "recompiler frag VALID" || echo "recompiler frag INVALID"
+          spirv-val /tmp/tri_vert.spv && echo "tri vert VALID" || echo "tri vert INVALID"
+          spirv-val /tmp/tri_frag.spv && echo "tri frag VALID" || echo "tri frag INVALID"
           g++ -std=c++20 -O2 -I runtime/include \
             runtime/test_vulkan_render.cpp runtime/vulkan_video_backend.cpp \
             -lvulkan -o /tmp/test_vulkan_render

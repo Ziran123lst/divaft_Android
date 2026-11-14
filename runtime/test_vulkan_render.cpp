@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "VULKAN_RENDER_TEST_FAIL (init: %s)\n", backend.last_error());
     return 1;
   }
+  std::fprintf(stderr, "[ckpt] backend ready\n"); std::fflush(stderr);
 
   // 证明1：重编译器 graphics SPIR-V → 图形管线。
   std::vector<uint32_t> rv, rf;
@@ -45,12 +46,15 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "VULKAN_RENDER_TEST_FAIL (load recompiler spv)\n");
     return 1;
   }
+  std::fprintf(stderr, "[ckpt] loaded recompiler vert=%zu frag=%zu words, before CreateGraphicsPipeline\n",
+               rv.size(), rf.size()); std::fflush(stderr);
   if (!backend.CreateGraphicsPipelineFromSpirv(rv.data(), rv.size(), rf.data(), rf.size())) {
     std::fprintf(stderr, "VULKAN_RENDER_TEST_FAIL (recompiler graphics pipeline: %s)\n",
                  backend.last_error());
     return 1;
   }
   std::fprintf(stderr, "[test] recompiler vertex+fragment SPIR-V accepted by graphics pipeline\n");
+  std::fflush(stderr);
 
   // 证明2：可见三角形离屏渲染 + 像素读回。
   std::vector<uint32_t> tv, tf;
