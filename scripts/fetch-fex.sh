@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 URL="https://github.com/FEX-Emu/FEX.git"
-REV="f2b679f6028ce1c38875233aecfcf5d3f8ebecec"
+REV="ea43314f040633c76fb5891ff31d8a7c3dc533b8"
 DEST=${FEX_SRC:-"$ROOT/third_party/fex"}
 
 SUBMODULES=(
