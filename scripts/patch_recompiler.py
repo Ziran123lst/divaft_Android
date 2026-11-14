@@ -13,6 +13,32 @@ if needle in s and 'post-first-ssa' not in s:
     open(p, 'w').write(s)
     print("patched recompiler.cpp: post-first-ssa dump")
 
+# --- recompiler.cpp: 解码日志（钉死每条 GCN 指令 opcode/src/dst）---
+s = open(p).read()
+if '[gcn] op=' not in s:
+    if '#include <cstdio>' not in s:
+        s = s.replace('#include <unordered_map>', '#include <unordered_map>\n#include <cstdio>', 1)
+    dec_old = (
+        "    while (!slice.atEnd()) {\n"
+        "        program.ins_list.emplace_back(decoder.decodeInstruction(slice));\n"
+        "    }"
+    )
+    dec_new = (
+        "    while (!slice.atEnd()) {\n"
+        "        auto dec_inst = decoder.decodeInstruction(slice);\n"
+        "        std::fprintf(stderr, \"[gcn] op=%u src0field=%u src0=%u dst0=%u\\n\",\n"
+        "                     (unsigned)dec_inst.opcode, (unsigned)dec_inst.src[0].field,\n"
+        "                     dec_inst.src[0].code, dec_inst.dst[0].code);\n"
+        "        program.ins_list.push_back(dec_inst);\n"
+        "    }"
+    )
+    if dec_old in s:
+        s = s.replace(dec_old, dec_new, 1)
+        open(p, 'w').write(s)
+        print("patched recompiler.cpp: GCN decode logging")
+    else:
+        print("WARN: decode loop pattern not found", file=sys.stderr)
+
 # --- ssa_rewrite_pass.cpp: V0 read/write logging ---
 q = 'third_party/shadps4/src/shader_recompiler/ir/passes/ssa_rewrite_pass.cpp'
 t = open(q).read()
