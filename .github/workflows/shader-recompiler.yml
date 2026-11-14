@@ -76,6 +76,31 @@ jobs:
           /tmp/test_vulkan_backend /tmp/diva_srt.spv | tee /tmp/vulkan-test.log
           grep -q VULKAN_SPIRV_TEST_PASS /tmp/vulkan-test.log
 
+      - name: Verify graphics rendering (recompiler SPIR-V + offscreen triangle, lavapipe)
+        run: |
+          sudo apt-get install -y glslang-tools
+          # 可见三角形 vertex/fragment（gl_VertexIndex，标准 GLSL→SPIR-V）。
+          cat > /tmp/tri.vert <<'GLSL'
+          #version 450
+          vec2 positions[3] = vec2[](vec2(0.0,-0.5), vec2(0.5,0.5), vec2(-0.5,0.5));
+          void main() { gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0); }
+          GLSL
+          cat > /tmp/tri.frag <<'GLSL'
+          #version 450
+          layout(location=0) out vec4 outColor;
+          void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }
+          GLSL
+          glslangValidator -V /tmp/tri.vert -o /tmp/tri_vert.spv
+          glslangValidator -V /tmp/tri.frag -o /tmp/tri_frag.spv
+          g++ -std=c++20 -O2 -I runtime/include \
+            runtime/test_vulkan_render.cpp runtime/vulkan_video_backend.cpp \
+            -lvulkan -o /tmp/test_vulkan_render
+          ICD=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)
+          if [ -n "$ICD" ]; then export VK_ICD_FILENAMES="$ICD"; fi
+          /tmp/test_vulkan_render /tmp/diva_vert.spv /tmp/diva_frag.spv /tmp/tri_vert.spv /tmp/tri_frag.spv \
+            | tee /tmp/vulkan-render.log
+          grep -q VULKAN_RENDER_TEST_PASS /tmp/vulkan-render.log
+
       - name: Upload shader_recompiler library
         if: always()
         uses: actions/upload-artifact@v4
@@ -86,6 +111,9 @@ jobs:
             build/shader/shader_translate_test_static
             /tmp/diva_minimal.spv
             /tmp/diva_srt.spv
+            /tmp/diva_vert.spv
+            /tmp/diva_frag.spv
             /tmp/shader-build.log
             /tmp/translate-test.log
             /tmp/vulkan-test.log
+            /tmp/vulkan-render.log

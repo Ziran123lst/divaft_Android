@@ -43,6 +43,14 @@ public:
 
   // shaders→Vulkan 核心：把 SPIR-V 创建为计算管线。成功返回 true。
   bool CreateComputePipelineFromSpirv(const uint32_t* spirv, size_t word_count);
+  // 图形管线离屏渲染：用 vertex+fragment SPIR-V 建图形管线，画 3 顶点，读回 RGBA 像素。
+  // 顶点输入为空（适配 gl_VertexIndex / 常量导出 shader）。成功返回 true 且 out_rgba 含 w*h*4 字节。
+  bool RenderGraphicsOffscreen(uint32_t w, uint32_t h, const uint32_t* vert, size_t vert_words,
+                               const uint32_t* frag, size_t frag_words,
+                               std::vector<uint8_t>& out_rgba);
+  // 仅验证 vertex+fragment SPIR-V 能建成图形管线（不渲染）。
+  bool CreateGraphicsPipelineFromSpirv(const uint32_t* vert, size_t vert_words,
+                                       const uint32_t* frag, size_t frag_words);
   // 是否已就绪（instance/device/queue 建立）。
   bool ready() const { return ready_; }
   // 最近一次错误描述（诊断）。
