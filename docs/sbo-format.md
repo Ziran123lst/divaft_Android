@@ -79,7 +79,12 @@ PS4 额外跟 `u8 hash[8] + u32 f[7]`。nsec 语义两版略异，**定位直接
 - 提取：PC 262（131v/131f）+ PS4 262（131v/131f），23 材质全对齐。
 - 转换：**262/262 GCN→IR→SPIR-V 成功**（SBO_TRANSLATE_TEST_PASS）。
 - 校验：**262/262 spirv-val 通过**。
-- ARM64 交叉编译 + qemu 验证走 CI（shader-recompiler.yml）。
+- ARM64 交叉编译 + qemu + lavapipe 手写用例：CI 全绿（run 43576113866，commit 8c4ac4f）。
+- Vulkan 消费（`runtime/test_sbo_vulkan.cpp`，lavapipe）：**驱动侧崩溃**，未通过——
+  崩在 libvulkan_lvp.so 编译真实 shader 时（手写用例同管线正常，属 lavapipe 对复杂真实
+  shader 的能力限制）。另 DIVA FS 的 1372 条 V_INTERP_MOV 全部 select=P10/P20（per-vertex
+  插值），SPIR-V 必需 **VK_KHR_fragment_shader_barycentric**，lavapipe 无此扩展。
+  **Turnip/Adreno 732 是否支持该扩展 = 真机必查项**；不支持则需自研插值回退。
 
 ---
 
