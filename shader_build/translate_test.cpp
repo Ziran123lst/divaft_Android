@@ -30,6 +30,10 @@ static bool TranslateOne(const char* name, const uint32_t* code, size_t count,
   Shader::RuntimeInfo runtime_info{};
   runtime_info.Initialize(hw, sw);
   runtime_info.props.num_user_data = 16;  // EmitPrologue 据此把 s0-s15 初始化为 GetUserData（SRT 根来源）
+  if (hw == Shader::HwStage::Fragment) {
+    // ExportRenderTarget 在 export_format==Zero 时丢弃导出；须设有效 MRT0 格式。
+    runtime_info.hw.fs.color_buffers[0].export_format = AmdGpu::ShaderExportFormat::ABGR_32;
+  }
 
   Shader::Profile profile{};
   profile.supported_spirv = 0x00010600;  // SPIR-V 1.6（对齐 shadPS4 SpirvVersion1_6）；
