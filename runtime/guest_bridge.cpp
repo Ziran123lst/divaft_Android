@@ -128,6 +128,7 @@ public:
     std::fprintf(stderr, "[sys-entry] id=%u rsp=0x%llx rip=0x%llx\n", id,
                  (unsigned long long)gregs[FEXCore::X86State::REG_RSP],
                  (unsigned long long)Frame->State.rip);
+    Frame->State.rip += 2;  // new FEX: handler 须自行推进 RIP 过 syscall(0F 05)，分发器按 State.rip 重入
     auto it = by_id_->find(id);
     if (it == by_id_->end()) return;
     // 诊断：读栈参前先打印函数名（定位读栈崩溃的函数）
