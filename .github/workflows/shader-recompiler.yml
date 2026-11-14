@@ -63,8 +63,8 @@ jobs:
           grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
           echo "=== 顶点 IR dump（定位顶点索引 prologue 消除点）==="
           DUMPDIR="$XDG_DATA_HOME/shadPS4/shader/dumps"
-          ls -la "$DUMPDIR" 2>/dev/null | grep -i vertex || echo "no vertex dumps"
-          for f in "$DUMPDIR"/Vertex_*.irprogram.txt; do
+          ls -la "$DUMPDIR" 2>/dev/null || echo "no dump dir"
+          for f in "$DUMPDIR"/1_*.irprogram.txt; do
             [ -f "$f" ] || continue
             echo "--- $f ---"
             grep -nE 'GetAttributeU32|VertexId|SetVectorRegister|GetVectorRegister|Undef|Prologue' "$f" | head -20
