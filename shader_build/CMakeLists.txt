@@ -33,11 +33,14 @@ endif()
 
 # ---- shader_recompiler 源 ----
 file(GLOB_RECURSE SHADER_SRCS CONFIGURE_DEPENDS "${SHADPS4}/src/shader_recompiler/*.cpp")
+# ARM64：原版 flatten_extended_userdata_pass 用 x86 xbyak JIT（#ifdef ARCH_X86_64），以兼容版替换。
+list(FILTER SHADER_SRCS EXCLUDE REGEX "flatten_extended_userdata_pass\\.cpp$")
 
 # ---- common / video_core 依赖（shader_recompiler 引用面）----
 set(DEP_SRCS
   "${CMAKE_CURRENT_SOURCE_DIR}/shader_assert.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/shader_stubs.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/flatten_userdata_arm64.cpp"
   "${SHADPS4}/src/common/io_file.cpp"
   "${SHADPS4}/src/common/path_util.cpp"
   "${SHADPS4}/src/common/string_util.cpp"
