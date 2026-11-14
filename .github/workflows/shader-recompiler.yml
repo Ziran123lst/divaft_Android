@@ -55,6 +55,9 @@ jobs:
           eval "$STATIC_CMD"
           "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -l shader_translate_test_static | grep -i interp || echo "no interpreter (good, static)"
           cd ../..
+          # shadPS4 path_util 启动即创建用户目录（create_directory 非递归）；重定向到已存在的临时目录避免抛异常。
+          export XDG_DATA_HOME=/tmp/shadps4-data
+          mkdir -p "$XDG_DATA_HOME"
           qemu-aarch64 ./build/shader/shader_translate_test_static | tee /tmp/translate-test.log
           grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
 
