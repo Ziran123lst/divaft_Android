@@ -21,6 +21,7 @@ set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory("${SHADPS4}/externals/zydis" "${CMAKE_BINARY_DIR}/zydis" EXCLUDE_FROM_ALL)
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)  # 复用上面已 add_subdirectory 的 fmt::fmt，避免 spdlog 自带 fmt 目标重复
 add_subdirectory("${SHADPS4}/externals/spdlog" "${CMAKE_BINARY_DIR}/spdlog" EXCLUDE_FROM_ALL)
 
 # ---- shader_recompiler 源 ----
