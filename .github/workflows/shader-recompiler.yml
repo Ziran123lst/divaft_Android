@@ -62,10 +62,12 @@ jobs:
           qemu-aarch64 ./build/shader/shader_translate_test_static | tee /tmp/translate-test.log
           grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
           # sbo_translate_test 静态化（真机验证包用）+ qemu 冒烟（最小 compute，无游戏数据）
-          LINK_CMD2=$(ninja -t commands sbo_translate_test | tail -1)
-          STATIC_CMD2=${LINK_CMD2/-o sbo_translate_test/-o sbo_translate_test_static -static}
-          STATIC_CMD2=${STATIC_CMD2//-llog/}
-          eval "$STATIC_CMD2"
+          # 注意：链接命令含相对路径，必须在 build/shader 内执行（子shell，不污染 cwd）
+          (cd build/shader && \
+            LINK_CMD2=$(ninja -t commands sbo_translate_test | tail -1) && \
+            STATIC_CMD2=${LINK_CMD2/-o sbo_translate_test/-o sbo_translate_test_static -static} && \
+            STATIC_CMD2=${STATIC_CMD2//-llog/} && \
+            eval "$STATIC_CMD2")
           mkdir -p /tmp/sbo_smoke
           printf '\xff\x03\xeb\xbe\x00\x00\x00\x00\x00\x00\x81\xbf' > /tmp/sbo_smoke/min_compute.gcn.bin
           qemu-aarch64 ./build/shader/sbo_translate_test_static /tmp/sbo_smoke | tee /tmp/sbo-smoke.log
