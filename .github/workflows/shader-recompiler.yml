@@ -63,11 +63,10 @@ jobs:
           grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
           echo "=== 顶点 IR dump（定位顶点索引 prologue 消除点）==="
           DUMPDIR="$XDG_DATA_HOME/shadPS4/shader/dumps"
-          for f in "$DUMPDIR"/vs_*.irprogram.txt; do
-            [ -f "$f" ] || continue
-            echo "--- $(basename "$f") : prologue/vertexid 踪迹 ---"
-            grep -nE 'GetAttributeU32|VertexId|SetVectorRegister|GetVectorRegister|Undef|Prologue' "$f" | head -15
-          done
+          echo "--- pre-lower-phi vs_ dump 全文 ---"
+          cat "$DUMPDIR"/vs_*.pre-lower-phi.irprogram.txt 2>/dev/null || true
+          echo "--- final vs_ dump 全文 ---"
+          cat "$DUMPDIR"/vs_0x0000000000001234.irprogram.txt 2>/dev/null || true
 
       - name: Verify SPIR-V consumed by Vulkan (software lavapipe, headless)
         run: |
