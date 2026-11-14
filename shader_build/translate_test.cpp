@@ -26,6 +26,7 @@ static bool TranslateOne(const char* name, const uint32_t* code, size_t count) {
   Shader::Info info(Shader::HwStage::Compute, Shader::SwStage::Compute, params);
   Shader::RuntimeInfo runtime_info{};
   runtime_info.Initialize(Shader::HwStage::Compute, Shader::SwStage::Compute);
+  runtime_info.props.num_user_data = 16;  // EmitPrologue 据此把 s0-s15 初始化为 GetUserData（SRT 根来源）
 
   Shader::Profile profile{};
   profile.supported_spirv = 0x00010000;  // Vulkan 1.0
