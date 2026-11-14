@@ -47,8 +47,14 @@ jobs:
       - name: Run GCN->SPIR-V translate test under qemu-aarch64
         run: |
           sudo apt-get install -y qemu-user
-          qemu-aarch64 -L "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot" \
-            ./build/shader/shader_translate_test | tee /tmp/translate-test.log
+          # 静态化（对齐 FEX harness）：动态版依赖 /system/bin/linker64，qemu 无法加载；静态版无解释器依赖。
+          cd build/shader
+          LINK_CMD=$(ninja -t commands shader_translate_test | tail -1)
+          STATIC_CMD=${LINK_CMD/-o shader_translate_test/-o shader_translate_test_static -static}
+          eval "$STATIC_CMD"
+          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -l shader_translate_test_static | grep -i interp || echo "no interpreter (good, static)"
+          cd ../..
+          qemu-aarch64 ./build/shader/shader_translate_test_static | tee /tmp/translate-test.log
           grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
 
       - name: Upload shader_recompiler library
@@ -58,6 +64,6 @@ jobs:
           name: divaft-shader-recompiler
           path: |
             build/shader/libdivaft_shader_recompiler.a
-            build/shader/shader_translate_test
+            build/shader/shader_translate_test_static
             /tmp/shader-build.log
             /tmp/translate-test.log
