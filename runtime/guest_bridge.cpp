@@ -79,6 +79,24 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
     for (int i = 0; i < 16; ++i)
       std::fprintf(stderr, " r%d=%llx", i, (unsigned long long)gregs[i]);
     std::fprintf(stderr, "\n");
+    // 调用者上下文：栈回溯 + 调用者代码字节（定位 eboot 触发指令序列）。
+    // veneer 经 call 进入，[rsp]=返回地址；dump 调用者前 48 后 16 字节供反汇编。
+    const uint64_t crash_rsp = gregs[FEXCore::X86State::REG_RSP];
+    if (crash_rsp > 0x10000 && crash_rsp < 0x100000000ULL) {
+      const uint64_t* sp = reinterpret_cast<const uint64_t*>(crash_rsp);
+      std::fprintf(stderr, "[guest-crash] stack@rsp:");
+      for (int i = 0; i < 8; ++i)
+        std::fprintf(stderr, " %llx", (unsigned long long)sp[i]);
+      std::fprintf(stderr, "\n");
+      const uint64_t ret = sp[0];
+      if (ret > 0x10000 && ret < 0x100000000ULL) {
+        std::fprintf(stderr, "[guest-crash] caller@%llx:", (unsigned long long)ret);
+        const uint8_t* cp = reinterpret_cast<const uint8_t*>(ret);
+        for (int i = -48; i < 16; ++i)
+          std::fprintf(stderr, " %02x", cp[i]);
+        std::fprintf(stderr, "\n");
+      }
+    }
     siglongjmp(t_exit_jmp, 2);
   }
   _exit(128 + sig);
