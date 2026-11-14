@@ -32,13 +32,19 @@ static bool TranslateOne(const char* name, const uint32_t* code, size_t count,
   runtime_info.props.num_user_data = 16;  // EmitPrologue 据此把 s0-s15 初始化为 GetUserData（SRT 根来源）
 
   Shader::Profile profile{};
-  profile.supported_spirv = 0x00010000;  // Vulkan 1.0
+  profile.supported_spirv = 0x00010600;  // SPIR-V 1.6（对齐 shadPS4 SpirvVersion1_6）；
+                                         // 1.0 太低：GroupNonUniformBallot(1.3+)/StorageBuffer8BitAccess(1.5+) 会非法
   profile.subgroup_size = 64;
   profile.max_viewport_width = 16384;
   profile.max_viewport_height = 16384;
   profile.max_shared_memory_size = 32768;
+  profile.support_int8 = true;
   profile.support_int16 = true;
   profile.support_int64 = true;
+  profile.support_float16 = true;
+  profile.support_float64 = true;
+  profile.supports_denorm_behavior_independence = true;
+  profile.supports_rounding_mode_independence = true;
 
   Shader::Pools pools;
   Shader::Backend::Bindings binding{};

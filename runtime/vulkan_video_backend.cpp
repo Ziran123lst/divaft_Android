@@ -30,7 +30,7 @@ bool VulkanVideoBackend::CreateInstanceAndDevice() {
   VkApplicationInfo app{};
   app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   app.pApplicationName = "divaft";
-  app.apiVersion = VK_API_VERSION_1_1;
+  app.apiVersion = VK_API_VERSION_1_3;  // SPIR-V 1.6 需 Vulkan 1.3（lavapipe 支持）
   VkInstanceCreateInfo ici{};
   ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   ici.pApplicationInfo = &app;
