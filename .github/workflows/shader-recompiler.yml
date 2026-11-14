@@ -61,6 +61,15 @@ jobs:
           mkdir -p "$XDG_DATA_HOME"
           qemu-aarch64 ./build/shader/shader_translate_test_static | tee /tmp/translate-test.log
           grep -q SHADER_TRANSLATE_TEST_PASS /tmp/translate-test.log
+          # sbo_translate_test 静态化（真机验证包用）+ qemu 冒烟（最小 compute，无游戏数据）
+          LINK_CMD2=$(ninja -t commands sbo_translate_test | tail -1)
+          STATIC_CMD2=${LINK_CMD2/-o sbo_translate_test/-o sbo_translate_test_static -static}
+          STATIC_CMD2=${STATIC_CMD2//-llog/}
+          eval "$STATIC_CMD2"
+          mkdir -p /tmp/sbo_smoke
+          printf '\xff\x03\xeb\xbe\x00\x00\x00\x00\x00\x00\x81\xbf' > /tmp/sbo_smoke/min_compute.gcn.bin
+          qemu-aarch64 ./build/shader/sbo_translate_test_static /tmp/sbo_smoke | tee /tmp/sbo-smoke.log
+          grep -q SBO_TRANSLATE_TEST_PASS /tmp/sbo-smoke.log
 
       - name: Verify SPIR-V consumed by Vulkan (software lavapipe, headless)
         run: |
@@ -116,6 +125,11 @@ jobs:
           # 主证明以 PASS 标记为准（重编译器管线验证可能令 lavapipe 崩溃，不影响三角形渲染主证明）。
           grep -q VULKAN_RENDER_TEST_PASS /tmp/vulkan-render.log
 
+      - name: Build vk_ext_check (ARM64 dynamic, device extension probe)
+        run: |
+          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang" \
+            runtime/vk_ext_check.c -O2 -lvulkan -o build/shader/vk_ext_check
+
       - name: Upload shader_recompiler library
         if: always()
         uses: actions/upload-artifact@v4
@@ -124,6 +138,9 @@ jobs:
           path: |
             build/shader/libdivaft_shader_recompiler.a
             build/shader/shader_translate_test_static
+            build/shader/sbo_translate_test_static
+            build/shader/vk_ext_check
+            /tmp/sbo-smoke.log
             /tmp/diva_minimal.spv
             /tmp/diva_srt.spv
             /tmp/diva_vert.spv
