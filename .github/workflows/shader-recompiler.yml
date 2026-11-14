@@ -6,7 +6,7 @@ on:
     paths:
       - "shader_build/**"
       - "runtime/**"
-      - "scripts/fetch-shadps4.sh"
+      - "scripts/**"
       - ".github/workflows/shader-recompiler.yml"
   workflow_dispatch:
 
