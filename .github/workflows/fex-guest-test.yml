@@ -70,7 +70,7 @@ jobs:
           # clobber r8/r9/r10（第4-6参），phase-2 同样失败；真机 FEX 正常（uncharted 已验证）。
           # 故以核心 + 新增桥接用例为通过标准，mem_hle 留待真机验证。
           ok=1
-          for t in int_add fp_mulsd direct_call host_call ret_func threads fp_hle sys_flags boot_seq; do
+          for t in int_add fp_mulsd direct_call host_call ret_func threads fp_hle sys_flags boot_seq avx256 avx_sys avx_caller; do
             if ! grep -q "${t}.*: PASS" /tmp/guest-test.log; then echo "缺少 PASS: $t" >&2; ok=0; fi
           done
           if grep -q 'mem_hle.*: PASS' /tmp/guest-test.log; then
