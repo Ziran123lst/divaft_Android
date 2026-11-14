@@ -1,59 +1,58 @@
-# 阶段3b：无 barycentric 扩展的插值回退方案（设计）
+# 阶段3b：无 barycentric 扩展的插值回退（已实施轻量方案）
 
-> 日期：2026-11-14 · 状态：真机裁决完成，方案选型中
-> 触发：DIVA FS 的 per-vertex 插值必需 VK_KHR_fragment_shader_barycentric，
-> 而目标设备两个驱动均不支持。
+> 日期：2026-11-14 · 状态：**轻量方案已实施并验证（446/446）**
+> 关键转折：用户实证——Bachata S4（shadPS4 系安卓 PS4 模拟器）+ Turnip gen8 v5
+> 在 Adreno 732 上正常游玩 DIVA FTDX，证明缺扩展不是硬阻断。
 
 ## 真机裁决（一加 Ace 3V / Adreno 732）
 
 | 驱动 | Vulkan | barycentric | AMD explicit vertex |
 |---|---|---|---|
 | 官方 Qualcomm | 1.3.128 | NO | NO |
-| Turnip gen8 v5（用户指定，模拟器同款） | 1.4.363 | NO | NO |
+| Turnip gen8 v5（Bachata S4 同款，glibc 容器） | 1.4.363 | NO | NO |
 
-Turnip 下设备识别为 "Adreno (TM) 735 (unknown)"（a7xx 通用路径，与用户模拟器实测一致）。
-驱动二进制含扩展名字符串但设备不暴露——字符串存在≠支持，以探针为准。
+Turnip 下设备识别为 "Adreno (TM) 735 (unknown)"（a7xx 通用路径）。
+探针：runtime/vk_ext_check.c（Bionic）/ vk_ext_check_glibc.c（glibc 容器）。
 
-## 上游 shadPS4 无现成回退（已核实源码）
+## 机制分析（为什么能玩）
 
-vk_pipeline_cache.cpp:361：
-`needs_manual_interpolation = IsFragmentShaderBarycentricSupported() && DriverID==Nvidia`
-——仅 Nvidia 专有驱动启用手动插值；无扩展时 V_INTERP_MOV select 0/1 直接 ASSERT。
-**结论：必须自研回退，不能靠上游配置或换驱动解决。**
+上游 shadPS4 的 V_INTERP_MOV_F32 用 ASSERT 挡住无扩展路径，但**代码里已有
+Flat 回退分支**（else: interp.primary=Flat + 普通 varying 读取）。
+标准插值路径（needs_manual_interpolation=false）下：
+- V_INTERP_P1_F32：no-op（硬件插值器经 qualifier 完成）
+- V_INTERP_P2_F32：设 qualifier + 普通 varying 读取，无需扩展
+- V_INTERP_MOV select 0/1：走 Flat 回退（ provoking vertex 值，视觉近似）
+Bachata S4 核心非公开，但其可玩实证与上述路径一致：**放宽 ASSERT 即可**。
 
-## DIVA 插值用量分析（eboot 88 个 FS 样本）
+## 已实施（轻量方案）
 
-- 79/88 的 FS 使用 per-vertex 插值（V_INTERP_P1/P2 + MOV select 0/1）
-- 涉及 attr 索引仅 0–4：attr0=79 个 FS、attr1=37、attr2=20、attr3=8、attr4=2
-- 即回退只需处理 ≤5 个属性的三顶点值，成本可控（SBO 131 FS 待同法统计）
+1. `scripts/patch_interp_fallback.py`：把依赖 vector_interpolation.cpp 的
+   ASSERT 放宽为注释，走现成 Flat 回退。幂等；CI fetch 后自动调用；
+   rebuild_local.sh 同步调用。
+2. 转换 profile 改标准路径：needs_manual_interpolation=false，
+   supports_fragment_shader_barycentric=false。
+3. 验证结果：
+   - **446/446 GCN→SPIR-V 成功**（SBO 262 + eboot 184）
+   - **446/446 spirv-val 通过**
+   - SPIR-V **不再含 FragmentBarycentricKHR**（0 处），无扩展依赖
+4. lavapipe 消费测试：随机段错误（同一调用时过时崩，单对/多对均复现）——
+   lavapipe 编译复杂真实 shader 的内部 bug，非管线逻辑问题；
+   手写用例 CI 稳定。真实消费目标为 Turnip（Bachata 实证可行）。
 
-## 候选方案
+## 画质备选（未实施，降级为选项）
 
-- **A. GS 展开**：几何着色器把每三角形 3 顶点的 attr 值以 flat varying 传给 FS。
-  缺点：Adreno GS 走仿真、性能差；varying 带宽 ×3 起。不推荐。
-- **B. VS→SSBO + FS 按 PrimitiveID 拉取（推荐）**：
-  1) VS 末尾把 per-vertex 属性（≤5 个）写入 SSBO（按 VertexIndex 索引）；
-  2) 可选 compute 预处理：按索引缓冲构建每三角形属性表（减少 FS 间接寻址）；
-  3) FS 用 gl_PrimitiveID（Vulkan FS 核心可用）取本三角形 3 顶点值，
-     替换 P10/P20/P0 读取；I/J 重心坐标同理由三角形屏幕空间位置重建或一并存储。
-  优点：无扩展依赖、无 GS、确定性；缺点：管线改造 + 每片段少量 storage 读。
-- C. 继续换驱动碰运气：期望值低，不作为主线。
+若 Flat 回退在真机渲染中出现不可接受的视觉瑕疵（per-vertex 属性被当 flat），
+再启用重型方案：VS→SSBO + FS 按 gl_PrimitiveID 拉取三顶点值。
+用量分析支持其可行性：per-vertex 访问仅涉 attr 0–4（eboot 88 FS 中 79 个使用，
+attr0 全部、attr1=37、attr2=20、attr3=8、attr4=2）。
+实施步骤草案：IR pass 改写 per-vertex GetAttribute → SSBO 拉取；VS 注入属性写出；
+管线加 SSBO 绑定；qemu/lavapipe 与标准路径逐像素比对。
 
-## 实施步骤（qemu/CI 优先，真机仅最终验证）
+## 后续
 
-1. SBO 131 FS 同法统计 attr 用量，确认 ≤5 属性假设
-2. IR 层：新增 interp_fallback pass——识别 per-vertex GetAttribute，
-   改写为 SSBO 拉取；VS 侧注入属性写出
-3. 运行时：管线布局加 SSBO 绑定 + PrimitiveID 传递；PM4 索引缓冲接入
-4. 验证：qemu 跑转换 + spirv-val + lavapipe 消费（lavapipe 支持 SSBO/PrimitiveID）；
-   用真实 DIVA FS 做渲染对照（与有扩展路径输出比对，x86 lavapipe 可跑标准路径做基准）
-5. 真机最终验证（Turnip gen8 v5 容器环境已打通）
-
-## 风险
-
-- I/J 重心坐标重建精度（音游画面要求亚像素正确）——需与标准路径逐像素比对
-- VS 写 SSBO 的同步（VS 完成→FS 读取的屏障）——Vulkan 管线内建依赖可控
-- 性能：每片段 ≤15 次 storage 读，Adreno 732 需实测帧率（阶段6 议题）
+- 真机渲染验证（Turnip gen8 v5 容器链路已打通）：观察 Flat 回退画质
+- 若画质 OK → 阶段3b 关闭，进入渲染执行主线
+- 若画质不行 → 启动 SSBO 拉取方案
 
 ---
 

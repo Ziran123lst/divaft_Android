@@ -35,6 +35,9 @@ jobs:
       - name: Fetch shadPS4 + externals
         run: bash scripts/fetch-shadps4.sh
 
+      - name: Apply divaft interp fallback patch
+        run: python3 scripts/patch_interp_fallback.py third_party/shadps4
+
       - name: Configure shader_recompiler (NDK arm64-v8a)
         run: |
           cmake -S shader_build -B build/shader -G Ninja \

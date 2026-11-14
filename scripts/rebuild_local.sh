@@ -39,7 +39,7 @@ if [ ! -d "$REPO/.git" ]; then
 fi
 # staging 里可能有未推送的更新，覆盖到构建副本
 for f in shader_build/sbo_translate_test.cpp shader_build/CMakeLists.txt shader_build/shader_stubs.cpp \
-         scripts/sbo_extract.py scripts/eboot_shaders_extract.py; do
+         scripts/sbo_extract.py scripts/eboot_shaders_extract.py scripts/patch_interp_fallback.py; do
   [ -f "$STAGING/$f" ] && python3 -c "
 import sys
 src,dst=sys.argv[1],sys.argv[2]
@@ -72,6 +72,7 @@ fi
 echo "shadps4: $(git -C "$REPO/third_party/shadps4" log --oneline -1 2>/dev/null || echo snapshot)"
 
 echo "== [4/6] 构建（x86 原生，验证用；ARM64 走 CI） =="
+python3 "$REPO/scripts/patch_interp_fallback.py" "$REPO/third_party/shadps4"
 cmake -S "$REPO/shader_build" -B "$REPO/build/shader-x86" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-14 > "$PERSIST/last-cfg.log" 2>&1
 cmake --build "$REPO/build/shader-x86" -j4 > "$PERSIST/last-build.log" 2>&1

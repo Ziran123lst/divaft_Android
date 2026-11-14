@@ -157,8 +157,8 @@ static bool TranslateOne(const std::string& name, const uint32_t* code, size_t c
   profile.support_float64 = true;
   profile.supports_denorm_behavior_independence = true;
   profile.supports_rounding_mode_independence = true;
-  profile.needs_manual_interpolation = true;
-  profile.supports_fragment_shader_barycentric = true;
+  profile.needs_manual_interpolation = false;   // 标准插值路径（无扩展设备可用）
+  profile.supports_fragment_shader_barycentric = false;  // Adreno 732 实测无此扩展
 
   Shader::Pools pools;
   Shader::Backend::Bindings binding{};
