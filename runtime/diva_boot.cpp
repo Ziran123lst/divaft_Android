@@ -34,7 +34,7 @@ std::vector<uint8_t> BuildInt() {
   std::vector<uint8_t> c;
   MovRaxImm64(c, 100);
   Emit(c, {0x48, 0x05, 0x17, 0x00, 0x00, 0x00});  // add rax, 23
-  Emit(c, {0xF4});                                 // hlt
+  Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                                 // hlt
   return c;
 }
 
@@ -47,7 +47,7 @@ std::vector<uint8_t> BuildMulsd() {
   Emit(c, {0x66, 0x48, 0x0F, 0x6E, 0xC8});  // movq xmm1, rax
   Emit(c, {0xF2, 0x0F, 0x59, 0xC1});        // mulsd xmm0, xmm1
   Emit(c, {0x66, 0x48, 0x0F, 0x7E, 0xC0});  // movq rax, xmm0
-  Emit(c, {0xF4});
+  Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
   return c;
 }
 
@@ -68,7 +68,7 @@ std::vector<uint8_t> BuildHostCall(uint64_t veneer_addr, uint64_t code_addr) {
   MovRaxImm64(c, 5);
   Emit(c, {0x48, 0x89, 0xC6});              // mov rsi, rax
   EmitCallRel32(c, code_addr, veneer_addr); // call veneer（直接调用）
-  Emit(c, {0xF4});                          // hlt
+  Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                          // hlt
   return c;
 }
 
@@ -208,7 +208,7 @@ static bool RunSelfTests() {
     MovRegImm64(c, 8, 0);             // r8 = memoryType
     MovRegImm64(c, 9, phys_out);      // r9 = physAddrOut
     EmitCallRel32(c, code_addr, alloc_veneer);  // 直接 call rel32（phase-2 验证过的形态）
-    Emit(c, {0xF4});                  // hlt
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                  // hlt
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     uint64_t phys = *reinterpret_cast<uint64_t*>(phys_out);
@@ -271,7 +271,7 @@ static bool RunSelfTests() {
     MovRaxImm64(c, fp_veneer);
     Emit(c, {0xFF, 0xD0});                     // call rax
     Emit(c, {0x66, 0x48, 0x0F, 0x7E, 0xC0});  // movq rax, xmm0
-    Emit(c, {0xF4});                           // hlt
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                           // hlt
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == Bits(6.0);
@@ -298,7 +298,7 @@ static bool RunSelfTests() {
       for (int b = 0; b < 8; ++b) c.push_back((ptr_addr >> (b * 8)) & 0xFF);
       Emit(c, {0xFF, 0xD0});              // call rax（间接）
     }
-    Emit(c, {0xF4});                       // hlt
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                       // hlt
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0xABC;
@@ -333,7 +333,7 @@ static bool RunSelfTests() {
       int32_t rel = static_cast<int32_t>(plt_addr - (code_addr + call_off + 5));
       for (int b = 0; b < 4; ++b) c.push_back((rel >> (b * 8)) & 0xFF);
     }
-    Emit(c, {0xF4});                        // hlt
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                        // hlt
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0xDEF;
@@ -366,7 +366,7 @@ static bool RunSelfTests() {
       int32_t rel = static_cast<int32_t>(plt_addr - (code_addr + call_off + 5));
       for (int b = 0; b < 4; ++b) c.push_back((rel >> (b * 8)) & 0xFF);
     }
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0x123;
@@ -403,7 +403,7 @@ static bool RunSelfTests() {
       for (int b = 0; b < 4; ++b) c.push_back((rel >> (b * 8)) & 0xFF);
       Emit(c, {0x48, 0xC7, 0x00, 0x42, 0x00, 0x00, 0x00});  // mov qword [rax], 0x42（写堆指针）
     }
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = (got != 0);  // 最后一次 malloc 返回非空
@@ -426,7 +426,7 @@ static bool RunSelfTests() {
     EmitCallRel32(c, code_addr, fv);         // call veneer
     Emit(c, {0x9C});                         // pushfq
     Emit(c, {0x58});                         // pop rax
-    Emit(c, {0xF4});                         // hlt
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                         // hlt
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = (got & 0x2) != 0;              // RFLAGS bit1（保留位，恒 1）
@@ -463,7 +463,7 @@ static bool RunSelfTests() {
     IndCall(1); IndCall(1);                  // atexit ×2
     MovRegImm64(c, 7, 0x70); IndCall(2);     // new(0x70)
     MovRegImm64(c, 7, 0x70); IndCall(2);     // new(0x70) 再次 → 启动在此崩
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t r = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = r == 0x1decd140;               // 第二次 new 的返回值
@@ -479,7 +479,7 @@ static bool RunSelfTests() {
     std::vector<uint8_t> c;
     Emit(c, {0xC5, 0xFD, 0x76, 0xC0});        // vpcmpeqd ymm0, ymm0, ymm0（修正：66前缀 pp=01→C5 FD，原 C5 FE 是 F3 非法）
     Emit(c, {0x66, 0x48, 0x0F, 0x7E, 0xC0});  // movq rax, xmm0
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0xFFFFFFFFFFFFFFFFULL;
@@ -501,7 +501,7 @@ static bool RunSelfTests() {
     MovRegImm64(c, 6, 5);
     EmitCallRel32(c, code_addr, av);          // call veneer → rax=42
     Emit(c, {0xC5, 0xFC, 0x57, 0xC0});        // vxorps ymm0, ymm0, ymm0
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 42;
@@ -542,7 +542,7 @@ static bool RunSelfTests() {
     Emit(c, {0x48, 0x89, 0x4B, 0x10});        // mov [rbx+16], rcx
     Emit(c, {0x66, 0xC7, 0x43, 0x18, 0x00, 0x00});  // movw [rbx+24], 0
     Emit(c, {0x48, 0x8B, 0x03});              // mov rax, [rbx]（读回验证）
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0xCAFE;
@@ -559,7 +559,7 @@ static bool RunSelfTests() {
     MovRegImm64(c, 1, 0x1234);              // mov rcx, 0x1234
     Emit(c, {0xC5, 0xFC, 0x57, 0xC0});      // vxorps ymm0, ymm0, ymm0
     Emit(c, {0x48, 0x89, 0xC8});            // mov rax, rcx
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0x1234;
@@ -581,7 +581,7 @@ static bool RunSelfTests() {
     EmitCallRel32(c, code_addr, gv);        // call veneer
     Emit(c, {0xC5, 0xFC, 0x57, 0xC0});      // vxorps ymm0
     Emit(c, {0x48, 0x89, 0xC8});            // mov rax, rcx
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0x1234;
@@ -620,7 +620,7 @@ static bool RunSelfTests() {
     Emit(c, {0x48, 0x89, 0x4B, 0x10});
     Emit(c, {0x66, 0xC7, 0x43, 0x18, 0x00, 0x00});
     Emit(c, {0x48, 0x8B, 0x03});
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 0xCAFE;
@@ -639,7 +639,7 @@ static bool RunSelfTests() {
     c.push_back(0xE8); size_t rel_off = c.size(); c.insert(c.end(), {0,0,0,0});  // call sub
     Emit(c, {0x5D});                          // pop rbp
     Emit(c, {0x5B});                          // pop rbx
-    Emit(c, {0xF4});                          // hlt
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床                          // hlt
     size_t sub_off = c.size();
     MovRaxImm64(c, 42);                       // sub: mov rax, 42
     Emit(c, {0xC3});                          // ret
@@ -665,7 +665,7 @@ static bool RunSelfTests() {
     MovRegImm64(c, 6, 5);
     EmitCallRel32(c, code_addr, pv);          // call veneer → rax=12
     Emit(c, {0x5B});                          // pop rbx
-    Emit(c, {0xF4});
+    Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
     bool ok = got == 12;

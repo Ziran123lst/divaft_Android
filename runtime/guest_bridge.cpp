@@ -101,6 +101,8 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
 
 class GuestSignalDelegator final : public FEXCore::SignalDelegator {
 public:
+  uint64_t callback_ret_addr = 0;
+  uintptr_t GetThunkCallbackRET() const override { return callback_ret_addr; }
   bool Install() {
     struct sigaction act {};
     act.sa_sigaction = &HostSignalHandler;
@@ -211,7 +213,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   // 返回蹦床：veneer 空间首 16 字节放 HLT（id 0 保留）。guest 函数 ret 到此即退出。
   impl_->exit_hlt = vbase;
   std::memset(impl_->veneer_space, 0, kVeneerSize);
-  impl_->veneer_space[0] = 0xF4;  // hlt
+  impl_->veneer_space[0] = 0x0F; impl_->veneer_space[1] = 0x3E;  // CALLBACKRET(0f3e)：HandleCallback 返回蹦床
 
   // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted/shadPS4）。
   // shadPS4 Tcb 布局：[0]=self [8]=dtv [16]=thread [24/32]=spare [40]=canary [48]=fiber。
@@ -287,13 +289,13 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   }
   if (stack == MAP_FAILED) return 0;
   const uint64_t stack_top = reinterpret_cast<uint64_t>(stack) + kGuestStack;
-  // 顶部留 4KB 白：HandleSyscall 读 [rsp+8..rsp+72] 栈参不越界。
-  const uint64_t rsp_top = stack_top - 4096;
-  uint64_t rsp = (rsp_top & ~uint64_t(15)) - 8 * (count > 6 ? ((count - 6 + 1) & ~1u) : 0);
-  for (unsigned i = 6; i < count; ++i)
-    *reinterpret_cast<uint64_t*>(rsp + 8 * (i - 6)) = args[i];
-  rsp -= 8;
-  *reinterpret_cast<uint64_t*>(rsp) = impl_->exit_hlt;  // 返回蹦床：ret 落 HLT 退出
+  // gow3 式：sp=top-headroom，栈参在 sp，RSP=sp+8（HandleCallback 在 RSP-16 压 CALLBACKRET 蹦床）
+  uint64_t sp = (stack_top - 4096) & ~uint64_t(15);
+  const unsigned stack_args = count > 6 ? count - 6 : 0;
+  sp = (sp - stack_args * 8) & ~uint64_t(15);
+  for (unsigned i = 0; i < stack_args; ++i)
+    reinterpret_cast<uint64_t*>(sp)[i] = args[6 + i];
+  uint64_t rsp = sp + 8;
 
   auto* thread = impl_->ctx->CreateThread(nullptr);
   if (!thread) { munmap(stack, kGuestStack); return 0; }
@@ -316,6 +318,9 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
                        FEXCore::X86State::REG_RDX, FEXCore::X86State::REG_RCX,
                        FEXCore::X86State::REG_R8,  FEXCore::X86State::REG_R9};
   for (unsigned i = 0; i < count && i < 6; ++i) state.gregs[regs[i]] = args[i];
+  state.gregs[FEXCore::X86State::REG_RAX] = 0;
+  thread->CurrentFrame->Pointers.ThunkCallbackRet = impl_->exit_hlt;
+  impl_->signals.callback_ret_addr = impl_->exit_hlt;
 
   // callret 预测栈（带守护页，per-call）。
   const size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
@@ -334,17 +339,24 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     thread->CallRetStackBase = cr_alloc + page;
     state.callret_sp = reinterpret_cast<uint64_t>(cr_alloc + page) + cr_size / 4;
   }
+  // gow3：保存 gregs+rip；HandleCallback 自带 PushCalleeSavedRegisters，保 r14/r15 跨 syscall
+  uint64_t saved[16];
+  std::memcpy(saved, state.gregs, sizeof(saved));
+  const uint64_t saved_rip = state.rip;
   t_active_thread = thread;
   std::fprintf(stderr, "[callguest] entry=0x%llx rsp=0x%llx stackbase=0x%llx tcb=0x%llx\n",
                (unsigned long long)entry, (unsigned long long)rsp,
                (unsigned long long)reinterpret_cast<uint64_t>(stack), (unsigned long long)impl_->tcb);
   uint64_t ret = 0;
   if (sigsetjmp(t_exit_jmp, 1) == 0) {
-    impl_->ctx->ExecuteThread(thread);
+    impl_->ctx->HandleCallback(thread, entry);
+    ret = state.gregs[FEXCore::X86State::REG_RAX];
   } else {
     ret = state.gregs[FEXCore::X86State::REG_RAX];
   }
   t_active_thread = nullptr;
+  std::memcpy(state.gregs, saved, sizeof(saved));
+  state.rip = saved_rip;
   impl_->ctx->DestroyThread(thread);
   if (cr_alloc != MAP_FAILED) munmap(cr_alloc, cr_size + 2 * page);
   munmap(stack, kGuestStack);
