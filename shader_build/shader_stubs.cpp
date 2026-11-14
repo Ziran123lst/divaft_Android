@@ -30,3 +30,20 @@ std::string GetCurrentThreadName() {
   return "shader";
 }
 }  // namespace Common
+
+#ifdef __ANDROID__
+// qemu 静态测试剔除 -llog（仅动态版）；若 spdlog/基础设施引用安卓日志符号，由此桩解析。
+#include <cstdarg>
+extern "C" int __android_log_print(int prio, const char* tag, const char* fmt, ...) {
+  (void)prio; (void)tag; (void)fmt;
+  return 0;
+}
+extern "C" int __android_log_write(int prio, const char* tag, const char* text) {
+  (void)prio; (void)tag; (void)text;
+  return 0;
+}
+extern "C" int __android_log_buf_print(int bufID, int prio, const char* tag, const char* fmt, ...) {
+  (void)bufID; (void)prio; (void)tag; (void)fmt;
+  return 0;
+}
+#endif

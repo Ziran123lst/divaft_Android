@@ -51,6 +51,7 @@ jobs:
           cd build/shader
           LINK_CMD=$(ninja -t commands shader_translate_test | tail -1)
           STATIC_CMD=${LINK_CMD/-o shader_translate_test/-o shader_translate_test_static -static}
+          STATIC_CMD=${STATIC_CMD//-llog/}  # liblog 仅动态版；qemu 静态测试不需要安卓日志库（桩在 shader_stubs.cpp）
           eval "$STATIC_CMD"
           "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -l shader_translate_test_static | grep -i interp || echo "no interpreter (good, static)"
           cd ../..
