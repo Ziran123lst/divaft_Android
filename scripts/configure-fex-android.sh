@@ -10,7 +10,7 @@ BUILD=${FEX_BUILD:-"$ROOT/build/fex-android"}
 [[ -d "$FEX_SRC/.git" ]] || { echo "FEX source missing (run fetch-fex.sh)" >&2; exit 1; }
 
 # bionic 构建适配补丁（幂等：逆向再应用）
-for P in "$ROOT/scripts/fex/fex-0001-android.patch" "$ROOT/scripts/fex/fex-0002-pause-wfe.patch" "$ROOT/scripts/fex/fex-0003-bionic-getdents64.patch"; do
+for P in "$ROOT/scripts/fex/fex-0001-android.patch" "$ROOT/scripts/fex/fex-0002-pause-wfe.patch" "$ROOT/scripts/fex/fex-0003-bionic-getdents64.patch" "$ROOT/scripts/fex/fex-0004-bionic-sysuser.patch"; do
   if git -C "$FEX_SRC" apply -R --check "$P" >/dev/null 2>&1; then
     git -C "$FEX_SRC" apply -R "$P"
   fi

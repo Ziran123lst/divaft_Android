@@ -1,0 +1,45 @@
+diff --git a/FEXCore/Source/Utils/Allocator.cpp b/FEXCore/Source/Utils/Allocator.cpp
+index 519622326..18c34819c 100644
+--- a/FEXCore/Source/Utils/Allocator.cpp
++++ b/FEXCore/Source/Utils/Allocator.cpp
+@@ -24,7 +24,9 @@
+ #ifndef _WIN32
+ #include <sys/mman.h>
+ #include <sys/resource.h>
+-#include <sys/user.h>
++#ifndef __BIONIC__
++#include <sys/user.h>  // g2-android: bionic lacks this header; not needed (FEX_PAGE_SIZE is hardcoded)
++#endif
+ #include <unistd.h>
+ #endif
+ 
+diff --git a/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp b/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
+index b136ec50d..e754df119 100644
+--- a/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
++++ b/FEXCore/Source/Utils/Allocator/64BitAllocator.cpp
+@@ -24,7 +24,9 @@
+ #include <new>
+ #include <sys/mman.h>
+ #include <sys/utsname.h>
+-#include <sys/user.h>
++#ifndef __BIONIC__
++#include <sys/user.h>  // g2-android: bionic lacks this header; not needed (FEX_PAGE_SIZE is hardcoded)
++#endif
+ #include <type_traits>
+ #include <utility>
+ 
+diff --git a/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h b/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
+index e29595a58..765735143 100644
+--- a/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
++++ b/FEXCore/Source/Utils/Allocator/IntrusiveArenaAllocator.h
+@@ -11,7 +11,9 @@
+ #include <cstddef>
+ #include <memory_resource>
+ namespace fex_pmr = std::pmr;
+-#include <sys/user.h>
++#ifndef __BIONIC__
++#include <sys/user.h>  // g2-android: bionic lacks this header; not needed (FEX_PAGE_SIZE is hardcoded)
++#endif
+ 
+ #include <mutex>
+ 
