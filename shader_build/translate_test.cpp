@@ -89,7 +89,7 @@ int main() {
   // VOP2=(op<<25)|(vdst<<17)|(vsrc1<<9)|src0；VOP1=0x7E000000|(vdst<<17)|(op<<9)|src0。
   // 内联常量:0.5=240,1.0=242,-1.0=243,2.0=244,0=128；VGPR vN src0=256+N。
   const uint32_t vert[] = {
-      0xBEEB03FFu,              // s_mov_b32 vcc_hi, imm（prologue）
+      0xBEEB03FFu, 0x00000000u, // s_mov_b32 vcc_hi, 0（prologue token 需紧跟 literal dword！）
       0x7E020D00u,              // v_cvt_f32_u32 v1, v0      ; v1=float(vertex_index)
       0x060402F3u,              // v_add_f32 v2, -1.0, v1    ; x=v1-1
       0x10060502u,              // v_mul_f32 v3, v2, v2      ; x*x
@@ -107,7 +107,7 @@ int main() {
 
   // 用例4：最简像素 shader——v0..v3=(1,0,0,1)，EXP mrt0 导出颜色。
   const uint32_t frag[] = {
-      0xBEEB03FFu,
+      0xBEEB03FFu, 0x00000000u,             // s_mov_b32 vcc_hi, 0（prologue 需紧跟 literal）
       0x7E0002FFu, 0x3F800000u,             // v0 = 1.0 (r)
       0x7E0202FFu, 0x00000000u,             // v1 = 0.0 (g)
       0x7E0402FFu, 0x00000000u,             // v2 = 0.0 (b)
