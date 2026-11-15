@@ -300,7 +300,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   if (stack == MAP_FAILED) return 0;
   const uint64_t stack_top = reinterpret_cast<uint64_t>(stack) + kGuestStack;
   // gow3 式：sp=top-headroom，栈参在 sp，RSP=sp+8（HandleCallback 在 RSP-16 压 CALLBACKRET 蹦床）
-  uint64_t sp = (stack_top - 256) & ~uint64_t(15);  // gow3 StackHeadroom=256
+  uint64_t sp = (stack_top - 4096) & ~uint64_t(15);
   const unsigned stack_args = count > 6 ? count - 6 : 0;
   sp = (sp - stack_args * 8) & ~uint64_t(15);
   for (unsigned i = 0; i < stack_args; ++i)
