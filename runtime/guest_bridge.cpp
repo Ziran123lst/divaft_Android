@@ -26,6 +26,7 @@
 #include <FEXCore/Config/Config.h>
 #include <Common/HostFeatures.h>
 #include <csignal>
+#include <ucontext.h>
 #include <csetjmp>
 #include <unistd.h>
 #endif
@@ -59,14 +60,20 @@ constexpr uint8_t kHlt = 0xF4;
 void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
   auto* thread = t_active_thread;
   if (thread) {
-    const uint64_t rip = thread->CurrentFrame->State.rip;
+    const auto& mctx = static_cast<const ucontext_t*>(ucontext)->uc_mcontext;
+    uint64_t rip = thread->CurrentFrame->State.rip;
+    // 精确 guest RIP：从 host PC 还原（gow3 同法），定位真正崩溃指令而非块首
+    if (thread->CTX && thread->CTX->IsAddressInCodeBuffer(thread, mctx.pc)) {
+      rip = thread->CTX->RestoreRIPFromHostPC(thread, mctx.pc);
+    }
     if (rip && reinterpret_cast<const uint8_t*>(rip)[0] == kHlt) {
       siglongjmp(t_exit_jmp, 1);
     }
     // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / 全寄存器 / rip 处字节。
     auto& gregs = thread->CurrentFrame->State.gregs;
-    std::fprintf(stderr, "[guest-crash] sig=%d code=%d rip=0x%llx faultaddr=%llx bytes:",
-                 sig, info->si_code, (unsigned long long)rip, (unsigned long long)info->si_addr);
+    std::fprintf(stderr, "[guest-crash] sig=%d code=%d rip=0x%llx faultaddr=%llx hostpc=%llx bytes:",
+                 sig, info->si_code, (unsigned long long)rip, (unsigned long long)info->si_addr,
+                 (unsigned long long)mctx.pc);
     if (rip) {
       for (int i = 0; i < 12; ++i)
         std::fprintf(stderr, " %02x", reinterpret_cast<const uint8_t*>(rip)[i]);
