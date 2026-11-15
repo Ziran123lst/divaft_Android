@@ -253,8 +253,8 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   FEXCore::Config::Initialize();
   FEXCore::Config::Load();
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
-  if (getenv("DIVA_DUMP_IR")) {  // 调试：DIVA_DUMP_IR=1 时 dump FEX IR 到 /tmp/fexir
-    FEXCore::Config::Set(FEXCore::Config::CONFIG_DUMPIR, "/tmp/fexir");
+  if (getenv("DIVA_DUMP_IR")) {  // 调试：DIVA_DUMP_IR=stderr 或目录路径
+    FEXCore::Config::Set(FEXCore::Config::CONFIG_DUMPIR, getenv("DIVA_DUMP_IR"));
   }
   FEXCore::Config::ReloadMetaLayer();
   auto features = FEX::FetchHostFeatures();  // fb925d6f 无参
