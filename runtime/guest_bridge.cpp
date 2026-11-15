@@ -294,6 +294,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   // 否则 Set 的值被冲掉 → Is64BitMode=0 → emitter 用 32 位 SRA(10个) → R12-R15 越界。
   FEXCore::Config::ReloadMetaLayer();
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
+  if (getenv("DIVA_NO_MULTIBLOCK")) FEXCore::Config::Set(FEXCore::Config::CONFIG_MULTIBLOCK, "0");
   if (getenv("DIVA_RSP_ASSERT")) {  // 调试：单步+CompileBlock RSP对齐断言
     FEXCore::Config::Set(FEXCore::Config::CONFIG_MAXINST, "1");
   }
@@ -455,6 +456,11 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     ret = state.gregs[FEXCore::X86State::REG_RAX];
   } else {
     ret = state.gregs[FEXCore::X86State::REG_RAX];
+  }
+  if (getenv("DIVA_DBG_RET")) {
+    std::fprintf(stderr, "[ret-dbg] final gregs:");
+    for (int i=0;i<16;++i) std::fprintf(stderr," r%d=%llx", i, (unsigned long long)state.gregs[i]);
+    std::fprintf(stderr," rip=%llx\n", (unsigned long long)state.rip);
   }
   t_active_thread = nullptr;
   std::memcpy(state.gregs, saved, sizeof(saved));
