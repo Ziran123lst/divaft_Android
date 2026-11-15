@@ -302,7 +302,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   sp = (sp - stack_args * 8) & ~uint64_t(15);
   for (unsigned i = 0; i < stack_args; ++i)
     reinterpret_cast<uint64_t*>(sp)[i] = args[6 + i];
-  uint64_t rsp = sp + 8;
+  uint64_t rsp = sp + 16;  // 实验：16对齐入口（HandleCallback-16→sp，0mod16）
 
   auto* thread = impl_->ctx->CreateThread(nullptr);
   if (!thread) { munmap(stack, kGuestStack); return 0; }
