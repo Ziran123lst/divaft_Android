@@ -53,6 +53,7 @@ static void EmitVeneer(uint8_t* p, uint32_t id) {
 
 namespace {
 thread_local FEXCore::Core::InternalThreadState* t_active_thread = nullptr;
+static FEXCore::SignalDelegator* g_delegator = nullptr;  // SRA 真值读取
 thread_local sigjmp_buf t_exit_jmp;
 constexpr uint8_t kHlt = 0xF4;
 
@@ -70,7 +71,15 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
       siglongjmp(t_exit_jmp, 1);
     }
     // 崩溃诊断：打印 guest rip / 信号 / fault 地址 / 全寄存器 / rip 处字节。
-    auto& gregs = thread->CurrentFrame->State.gregs;
+    auto& gregs_frame = thread->CurrentFrame->State.gregs;
+    uint64_t gregs_buf[16];
+    std::memcpy(gregs_buf, gregs_frame, sizeof(gregs_buf));
+    if (g_delegator) {  // SRA 寄存器真值在 host 寄存器，frame 是陈旧值
+      const auto& cfg = g_delegator->GetConfig();
+      for (unsigned i = 0; i < cfg.SRAGPRCount && i < 16; ++i)
+        gregs_buf[i] = mctx.regs[cfg.SRAGPRMapping[i]];
+    }
+    auto* gregs = gregs_buf;
     std::fprintf(stderr, "[guest-crash] sig=%d code=%d rip=0x%llx faultaddr=%llx hostpc=%llx bytes:",
                  sig, info->si_code, (unsigned long long)rip, (unsigned long long)info->si_addr,
                  (unsigned long long)mctx.pc);
@@ -280,6 +289,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   if (!impl_->ctx) return false;
   impl_->syscalls = fextl::make_unique<VeneerSyscallHandler>(&impl_->by_id, guest_base, guest_size);
   impl_->ctx->SetSignalDelegator(&impl_->signals);
+  g_delegator = &impl_->signals;
   impl_->ctx->SetSyscallHandler(impl_->syscalls.get());
   if (!impl_->signals.Install()) return false;
   if (!impl_->ctx->InitCore()) return false;
