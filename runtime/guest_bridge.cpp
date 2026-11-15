@@ -137,12 +137,16 @@ public:
                  (unsigned long long)gregs[FEXCore::X86State::REG_RSP],
                  (unsigned long long)Frame->State.rip);
     Frame->State.rip += 2;  // new FEX: handler 须自行推进 RIP 过 syscall(0F 05)，分发器按 State.rip 重入
-    std::fprintf(stderr, "[sys-dbg] enter rcx=%llx rbx=%llx rax=%llx rsp=%llx rip=%llx\n",
+    std::fprintf(stderr, "[sys-dbg] enter rcx=%llx rbx=%llx rax=%llx rsp=%llx rip=%llx r12=%llx r13=%llx r14=%llx r15=%llx\n",
                  (unsigned long long)gregs[FEXCore::X86State::REG_RCX],
                  (unsigned long long)gregs[FEXCore::X86State::REG_RBX],
                  (unsigned long long)gregs[FEXCore::X86State::REG_RAX],
                  (unsigned long long)gregs[FEXCore::X86State::REG_RSP],
-                 (unsigned long long)Frame->State.rip);
+                 (unsigned long long)Frame->State.rip,
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R12],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R13],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R14],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R15]);
     auto it = by_id_->find(id);
     if (it == by_id_->end()) return;
     // 诊断：读栈参前先打印函数名（定位读栈崩溃的函数）
@@ -169,6 +173,11 @@ public:
     std::fprintf(stderr, "[sys-ret] %s a0=0x%llx -> 0x%llx\n", it->second.name.c_str(),
                  (unsigned long long)int_args[0], (unsigned long long)ret);
     gregs[FEXCore::X86State::REG_RAX] = ret;
+    std::fprintf(stderr, "[sys-dbg] exit  r12=%llx r13=%llx r14=%llx r15=%llx\n",
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R12],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R13],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R14],
+                 (unsigned long long)gregs[FEXCore::X86State::REG_R15]);
     if (hret.rdx_set) gregs[FEXCore::X86State::REG_RDX] = hret.rdx;
     if (hret.fp) {
       Frame->State.xmm.sse.data[0][0] = hret.xmm0;
