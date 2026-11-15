@@ -42,11 +42,21 @@ constexpr size_t kGuestStack = 1 * 1024 * 1024;  // 每次 CallGuest 的私有 g
 // 栈布局（syscall 时）：[rsp+0]=arg4 [rsp+8]=arg5 [rsp+16]=arg6 [rsp+24]=返回地址 [rsp+32..]=溢出参。
 static void EmitVeneer(uint8_t* p, uint32_t id) {
   size_t i = 0;
+  // divaft workaround：FEX syscall 恢复路径损坏 callee-saved r12-r15（r15←RCX返回RIP，
+  // 最小用例 r15_sys 实锤）。veneer 在 syscall 前后 push/pop 保存恢复，绕过该 bug。
+  p[i++] = 0x41; p[i++] = 0x54;                 // push r12
+  p[i++] = 0x41; p[i++] = 0x55;                 // push r13
+  p[i++] = 0x41; p[i++] = 0x56;                 // push r14
+  p[i++] = 0x41; p[i++] = 0x57;                 // push r15
   p[i++] = 0x49; p[i++] = 0x89; p[i++] = 0xCA;  // mov r10, rcx（arg4）
   p[i++] = 0xB8;                                 // mov eax, id
   std::memcpy(p + i, &id, 4); i += 4;
   p[i++] = 0x0F; p[i++] = 0x05;                 // syscall
-  p[i++] = 0xC3;                                 // ret（gow3 式无 push：新 FEX 保住 r8/r9/r10，无需压栈）
+  p[i++] = 0x41; p[i++] = 0x5F;                 // pop r15
+  p[i++] = 0x41; p[i++] = 0x5E;                 // pop r14
+  p[i++] = 0x41; p[i++] = 0x5D;                 // pop r13
+  p[i++] = 0x41; p[i++] = 0x5C;                 // pop r12
+  p[i++] = 0xC3;                                 // ret
 }
 
 #ifdef DIVAFT_WITH_FEX
@@ -168,8 +178,8 @@ public:
         gregs[FEXCore::X86State::REG_R8], gregs[FEXCore::X86State::REG_R9]};
     const uint64_t rsp = gregs[FEXCore::X86State::REG_RSP];
     if (rsp) {
-      // gow3 式无 push veneer：[rsp]=返回地址 [rsp+8..]=第7+溢出参；4-6 参直接读 R10/R8/R9
-      std::memcpy(&int_args[6], reinterpret_cast<const void*>(rsp + 8), 8 * sizeof(uint64_t));
+      // veneer push r12-r15（32B）：[rsp..24]=保存寄存器 [rsp+32]=返回地址 [rsp+40..]=第7+溢出参
+      std::memcpy(&int_args[6], reinterpret_cast<const void*>(rsp + 40), 8 * sizeof(uint64_t));
     }
     // 浮点参 XMM0..7 低 64 位（参照 uncharted：st.xmm.sse.data[i][0]）。
     double fp_args[8];
@@ -246,7 +256,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   // boot 引导桩（veneer 空间 +0x10000）：add rsp,16 跳过蹦床→[rsp]=EntryParams[0]；jmp rax(=真实入口)
   impl_->boot_stub = vbase + 0x10000;
   uint8_t* bs = impl_->veneer_space + 0x10000;
-  bs[0]=0x48; bs[1]=0x83; bs[2]=0xC4; bs[3]=0x0C;  // add rsp, 12（补偿 fb925d6f HandleCallback 实测 -12，使 eboot 入口=sp+8 8mod16）
+  bs[0]=0x48; bs[1]=0x83; bs[2]=0xC4; bs[3]=0x10;  // add rsp, 16（64位SRA下 HandleCallback 实测 -16，使 eboot 入口=sp+8 8mod16）
   bs[4]=0xFF; bs[5]=0xE0;                          // jmp rax
 
   // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted/shadPS4）。
@@ -270,18 +280,28 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
 #ifdef DIVAFT_WITH_FEX
   FEXCore::Config::Initialize();
   FEXCore::Config::Load();
+  // 关键时序：ReloadMetaLayer 会 clear+重合并各层，必须先 reload 再 Set，
+  // 否则 Set 的值被冲掉 → Is64BitMode=0 → emitter 用 32 位 SRA(10个) → R12-R15 越界。
+  FEXCore::Config::ReloadMetaLayer();
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
   if (getenv("DIVA_RSP_ASSERT")) {  // 调试：单步+CompileBlock RSP对齐断言
     FEXCore::Config::Set(FEXCore::Config::CONFIG_MAXINST, "1");
   }
   if (getenv("DIVA_DUMP_IR")) {  // 调试：DIVA_DUMP_IR=stderr 或目录路径
     FEXCore::Config::Set(FEXCore::Config::CONFIG_DUMPIR, getenv("DIVA_DUMP_IR"));
+    FEXCore::Config::Set(FEXCore::Config::CONFIG_PASSMANAGERDUMPIR, "afteropt");
   }
-  FEXCore::Config::ReloadMetaLayer();
+  if (getenv("DIVA_DBG_CFG")) {
+    auto v = FEXCore::Config::Get(FEXCore::Config::CONFIG_IS64BIT_MODE);
+    std::fprintf(stderr, "[cfg] IS64BIT exists=%d val=%s\n",
+      (int)FEXCore::Config::Exists(FEXCore::Config::CONFIG_IS64BIT_MODE),
+      (v && *v) ? (*v)->c_str() : "(null)");
+  }
   auto features = FEX::FetchHostFeatures();  // fb925d6f 无参
   // 真机 Cortex-X4/A720 有 SVE2-128：保留 SVE128 自动探测（AVX128 路径内部依赖 SVE128，
   // 强制关闭会破坏 256 位 AVX 翻译）。仅关 SVE256（真机 128 位向量长；qemu 误报 256 会生成非法指令）。
   features.SupportsSVE256 = false;  // fb925d6f 直接位域
+  if (getenv("DIVA_NO_SVE")) { features.SupportsSVE128 = false; }  // 判决实验：对齐真机 SVE128=0
   features.SupportsSVEBitPerm = false;
   std::fprintf(stderr, "[bridge] HostFeatures: AVX=%d SVE128=%d SVE256=%d\n",
                (int)features.SupportsAVX, (int)features.SupportsSVE128, (int)features.SupportsSVE256);

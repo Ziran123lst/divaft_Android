@@ -674,6 +674,109 @@ static bool RunSelfTests() {
                 "push1_sys", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
+  // 对照：先读后写 r12-r15（强制块入口 LoadRegister），验证"只写不读"是否触发 RA 错位。
+  {
+    ++total;
+    uint64_t fn_addr = base + 0x2C800;
+    uint8_t fn[] = {0x48, 0xC7, 0xC0, 0x99, 0x00, 0x00, 0x00, 0xC3};
+    std::memcpy(reinterpret_cast<void*>(fn_addr), fn, sizeof(fn));
+    uint64_t code_addr = base + 0x2C000;
+    uint64_t buf_addr = base + 0x2D000;
+    std::vector<uint8_t> c;
+    // 先读（mov rax, rN）强制 LoadRegister，再写
+    Emit(c, {0x49, 0x8B, 0xC4}); MovRegImm64(c, 12, 0x1111);  // r12
+    Emit(c, {0x49, 0x8B, 0xC5}); MovRegImm64(c, 13, 0x2222);  // r13
+    Emit(c, {0x49, 0x8B, 0xC6}); MovRegImm64(c, 14, 0x3333);  // r14
+    Emit(c, {0x49, 0x8B, 0xC7}); MovRegImm64(c, 15, 0x4444);  // r15
+    MovRegImm64(c, 3, 0x5555);
+    EmitCallRel32(c, code_addr, fn_addr);
+    MovRegImm64(c, 7, buf_addr);
+    Emit(c, {0x4C, 0x89, 0x27});
+    Emit(c, {0x4C, 0x89, 0x6F, 0x08});
+    Emit(c, {0x4C, 0x89, 0x77, 0x10});
+    Emit(c, {0x4C, 0x89, 0x7F, 0x18});
+    Emit(c, {0x48, 0x89, 0x5F, 0x20});
+    Emit(c, {0x48, 0xC7, 0xC0, 0x00, 0x00, 0x00, 0x00});
+    Emit(c, {0xC3});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    bridge.CallGuest(code_addr, nullptr, 0);
+    auto* buf = reinterpret_cast<const uint64_t*>(buf_addr);
+    bool ok = buf[0]==0x1111 && buf[1]==0x2222 && buf[2]==0x3333 && buf[3]==0x4444 && buf[4]==0x5555;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (r12=%llx r13=%llx r14=%llx r15=%llx rbx=%llx)\n",
+                "r15_rw", ok ? "PASS" : "FAIL",
+                (unsigned long long)buf[0], (unsigned long long)buf[1], (unsigned long long)buf[2],
+                (unsigned long long)buf[3], (unsigned long long)buf[4]);
+  }
+
+  // r15 跨纯 guest call 保存隔离（不经 syscall）：判定 callret 机制是否损坏 callee-saved。
+  {
+    ++total;
+    uint64_t fn_addr = base + 0x29800;
+    uint8_t fn[] = {0x48, 0xC7, 0xC0, 0x99, 0x00, 0x00, 0x00, 0xC3};  // mov rax,0x99; ret
+    std::memcpy(reinterpret_cast<void*>(fn_addr), fn, sizeof(fn));
+    uint64_t code_addr = base + 0x2A000;
+    uint64_t buf_addr = base + 0x2B000;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 12, 0x1111);
+    MovRegImm64(c, 13, 0x2222);
+    MovRegImm64(c, 14, 0x3333);
+    MovRegImm64(c, 15, 0x4444);
+    MovRegImm64(c, 3, 0x5555);              // rbx
+    auto snapshot = [&](std::vector<uint8_t>& cc, unsigned off) {
+      MovRegImm64(cc, 7, buf_addr);         // mov rdi, buf
+      Emit(cc, {0x4C, 0x89, 0x67, (uint8_t)off});        // mov [rdi+off], r12
+      Emit(cc, {0x4C, 0x89, 0x6F, (uint8_t)(off+8)});    // r13
+      Emit(cc, {0x4C, 0x89, 0x77, (uint8_t)(off+16)});   // r14
+      Emit(cc, {0x4C, 0x89, 0x7F, (uint8_t)(off+24)});   // r15
+      Emit(cc, {0x48, 0x89, 0x5F, (uint8_t)(off+32)});   // rbx
+    };
+    EmitCallRel32(c, code_addr, fn_addr);   // 第1次 call（触发块编译）
+    snapshot(c, 0);
+    MovRegImm64(c, 12, 0x1111);             // 重设
+    MovRegImm64(c, 13, 0x2222);
+    MovRegImm64(c, 14, 0x3333);
+    MovRegImm64(c, 15, 0x4444);
+    MovRegImm64(c, 3, 0x5555);
+    EmitCallRel32(c, code_addr, fn_addr);   // 第2次 call（已编译快路径）
+    snapshot(c, 48);
+    Emit(c, {0x48, 0xC7, 0xC0, 0x00, 0x00, 0x00, 0x00});  // mov rax, 0
+    Emit(c, {0xC3});                        // ret
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    bridge.CallGuest(code_addr, nullptr, 0);
+    auto* buf = reinterpret_cast<const uint64_t*>(buf_addr);
+    bool ok1 = buf[0]==0x1111 && buf[1]==0x2222 && buf[2]==0x3333 && buf[3]==0x4444 && buf[4]==0x5555;
+    bool ok2 = buf[6]==0x1111 && buf[7]==0x2222 && buf[8]==0x3333 && buf[9]==0x4444 && buf[10]==0x5555;
+    if (ok1 && ok2) ++passed;
+    std::printf("[divaft-guest] r15_call 第1次(编译): %s r12=%llx r13=%llx r14=%llx r15=%llx rbx=%llx\n",
+                ok1?"PASS":"FAIL", (unsigned long long)buf[0], (unsigned long long)buf[1],
+                (unsigned long long)buf[2], (unsigned long long)buf[3], (unsigned long long)buf[4]);
+    std::printf("[divaft-guest] r15_call 第2次(快路): %s r12=%llx r13=%llx r14=%llx r15=%llx rbx=%llx\n",
+                ok2?"PASS":"FAIL", (unsigned long long)buf[6], (unsigned long long)buf[7],
+                (unsigned long long)buf[8], (unsigned long long)buf[9], (unsigned long long)buf[10]);
+  }
+
+  // r15 跨 syscall 保存隔离：mov r15,0x1234 → call veneer → mov rax,r15。
+  {
+    ++total;
+    uint64_t rv = bridge.ExposeHost("r15_probe",
+        [](const uint64_t* a, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return a[0] + a[1]; });
+    uint64_t code_addr = base + 0x29000;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 15, 0x1234);             // mov r15, 0x1234
+    MovRegImm64(c, 7, 7);
+    MovRegImm64(c, 6, 5);
+    EmitCallRel32(c, code_addr, rv);        // call host_add
+    Emit(c, {0x4C, 0x89, 0xF8});            // mov rax, r15
+    Emit(c, {0xC3});                        // ret
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 0x1234;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x1234)\n",
+                "r15_sys", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);
