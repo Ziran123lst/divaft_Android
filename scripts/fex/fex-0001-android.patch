@@ -1,19 +1,19 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 89765883f..5ed929ece 100644
+index 71d8a738a..df4b191f2 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -10,6 +10,10 @@ option(BUILD_THUNKS "Build thunks" FALSE)
- option(ENABLE_CLANG_THUNKS "Build thunks with clang" TRUE)
- 
+@@ -7,6 +7,10 @@ check_include_files("gdb/jit-reader.h" HAVE_GDB_JIT_READER_H)
+ option(BUILD_FEX_LINUX_TESTS "Build FEXLinuxTests (requires x86 compiler)" FALSE)
+ option(BUILD_THUNKS "Build thunks" FALSE)
  option(BUILD_FEXCONFIG "Build FEXConfig" TRUE)
 +option(BUILD_FEXCORE_ONLY "Build only FEXCore and an embedding smoke executable" OFF)
 +set(FEXCORE_SMOKE_SOURCE "" CACHE FILEPATH "Embedding smoke executable source")
 +set(FEXCORE_GUEST_HARNESS_SOURCES "" CACHE STRING "Semicolon-separated absolute guest harness sources")
 +set(FEXCORE_PROJECT_SOURCE_DIR "" CACHE PATH "Embedding project source directory")
+ option(ENABLE_CLANG_THUNKS "Build thunks with clang" TRUE)
  option(ENABLE_IWYU "Enable the Include What You Use sanitizer" FALSE)
  option(ENABLE_LTO "Enable LTO with compilation" TRUE)
- option(ENABLE_COVERAGE "Enable Code Coverage" FALSE)
-@@ -90,7 +94,7 @@ if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+@@ -61,7 +65,7 @@ if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
    message(FATAL_ERROR "Unsupported pointer size ${CMAKE_SIZEOF_VOID_P}."
      " FEX only supports 64-bit (8-byte pointer) systems."
      " If you believe this is in error, file an issue.")
@@ -22,7 +22,20 @@ index 89765883f..5ed929ece 100644
    message(FATAL_ERROR "Unsupported system type ${CMAKE_SYSTEM_NAME}."
      " FEX only supports Linux and Windows."
      " If you believe this is in error, file an issue.")
-@@ -696,7 +700,48 @@ add_subdirectory(External/SoftFloat-3e/)
+@@ -278,7 +282,11 @@ if (ENABLE_COMPILE_TIME_TRACE)
+   link_libraries(-ftime-trace)
+ endif()
+ 
+-set(PTHREAD_LIB pthread)
++if (ANDROID)
++  set(PTHREAD_LIB "")  # g2-android: pthread in bionic libc
++else()
++  set(PTHREAD_LIB pthread)
++endif()
+ 
+ if (USE_LINKER)
+   message(STATUS "Overriding linker to: ${USE_LINKER}")
+@@ -629,7 +637,48 @@ add_subdirectory(External/SoftFloat-3e/)
  add_subdirectory(External/cephes/)
  add_subdirectory(FEXHeaderUtils/)
  add_subdirectory(CodeEmitter/)
@@ -45,7 +58,7 @@ index 89765883f..5ed929ece 100644
 +    "${CMAKE_BINARY_DIR}/generated"
 +    "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
 +  target_link_libraries(fexcore-smoke PRIVATE
-+    FEXCore Common CommonTools JemallocLibs)
++    FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
 +  if (FEXCORE_GUEST_HARNESS_SOURCES)
 +    if (NOT IS_ABSOLUTE "${FEXCORE_PROJECT_SOURCE_DIR}" OR NOT IS_DIRECTORY "${FEXCORE_PROJECT_SOURCE_DIR}")
 +      message(FATAL_ERROR "FEXCORE_PROJECT_SOURCE_DIR must be an absolute source directory")
@@ -62,7 +75,7 @@ index 89765883f..5ed929ece 100644
 +      "${CMAKE_BINARY_DIR}/generated"
 +      "${CMAKE_SOURCE_DIR}/Source/Tools/CommonTools")
 +    target_link_libraries(fexcore-guest-harness PRIVATE
-+      FEXCore Common CommonTools JemallocLibs)
++      FEXCore Common CommonTools JemallocLibs ${PTHREAD_LIB})
 +    install(TARGETS fexcore-smoke fexcore-guest-harness RUNTIME DESTINATION bin)
 +  else()
 +    install(TARGETS fexcore-smoke RUNTIME DESTINATION bin)
@@ -73,15 +86,14 @@ index 89765883f..5ed929ece 100644
  if (ARCHITECTURE_arm64 AND NOT MINGW AND NOT BUILD_STEAM_SUPPORT)
    # Binfmt_misc files must be installed prior to Source/ installs
 diff --git a/FEXCore/include/FEXCore/fextl/functional.h b/FEXCore/include/FEXCore/fextl/functional.h
-index 8e8ed659a..4d01f2853 100644
+index 8e8ed659a..0d0b64abf 100644
 --- a/FEXCore/include/FEXCore/fextl/functional.h
 +++ b/FEXCore/include/FEXCore/fextl/functional.h
-@@ -52,9 +52,13 @@ public:
+@@ -52,9 +52,12 @@ public:
  
        // Third, assign the result to std::function, ensuring it's indeed
        // allocation-free by checking for nothrow-constructibility
-+      // g2-android: libc++ does not mark std::function assignment noexcept; single-pointer
-+      // capture fits its small buffer (no allocation), which is what this check guards.
++      // g2-android: libc++ std::function assignment not noexcept; single-pointer capture fits small buffer
 +#ifndef _LIBCPP_VERSION
        static_assert(noexcept(internal = std::move(wrapped_lambda)), "This implementation of std::function "
                                                                      "does not support implementing "
