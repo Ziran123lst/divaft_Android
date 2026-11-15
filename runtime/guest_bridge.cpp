@@ -24,6 +24,8 @@
 #include <FEXCore/HLE/SyscallHandler.h>
 #include <FEXCore/Debug/InternalThreadState.h>
 #include <FEXCore/Config/Config.h>
+#include <FEXCore/Utils/ArchHelpers/Arm64.h>
+#include <FEXCore/Utils/LongJump.h>
 #include <Common/HostFeatures.h>
 #include <csignal>
 #include <ucontext.h>
@@ -56,12 +58,58 @@ thread_local FEXCore::Core::InternalThreadState* t_active_thread = nullptr;
 static FEXCore::SignalDelegator* g_delegator = nullptr;  // SRA 真值读取
 thread_local sigjmp_buf t_exit_jmp;
 constexpr uint8_t kHlt = 0xF4;
+thread_local uint64_t t_callret_alloc = 0;
+thread_local uint64_t t_callret_alloc_size = 0;
+static FEXCore::ArchHelpers::Arm64::UnalignedHandlerType g_unaligned_type =
+    FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::NonAtomic;
+
+// gow3 式：从 ucontext 取 FPSIMD 记录（JIT 守护页溢出重启编译用）
+struct FpsimdRecord { uint32_t magic, size; uint32_t fpsr, fpcr; __uint128_t v[32]; };
+constexpr uint32_t FpsimdMagic = 0x46508001;
+static FpsimdRecord* Fpsimd(ucontext_t* uc) {
+  auto* at = reinterpret_cast<unsigned char*>(uc->uc_mcontext.__reserved);
+  auto* end = at + sizeof(uc->uc_mcontext.__reserved);
+  while (at + 8 <= end) {
+    uint32_t magic, size;
+    std::memcpy(&magic, at, 4); std::memcpy(&size, at + 4, 4);
+    if (magic == FpsimdMagic) return reinterpret_cast<FpsimdRecord*>(at);
+    if (!magic || size < 8) break;
+    at += size;
+  }
+  return nullptr;
+}
 
 // guest 以 HLT 结束执行（直接 HLT 或经返回蹦床 ret 到 exit_hlt）；故障信号里检测 HLT 跳出。
 void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
   auto* thread = t_active_thread;
   if (thread) {
     const auto& mctx = static_cast<const ucontext_t*>(ucontext)->uc_mcontext;
+    // gow3 式故障处理（在崩溃诊断之前）：callret 溢出 / JIT 守护页 / 非对齐 TSO 访问
+    auto& m = static_cast<ucontext_t*>(ucontext)->uc_mcontext;
+    const uint64_t faddr = reinterpret_cast<uint64_t>(info->si_addr);
+    if (sig == SIGSEGV) {
+      if (t_callret_alloc && faddr - t_callret_alloc < t_callret_alloc_size) {
+        m.regs[25] = reinterpret_cast<uint64_t>(thread->CallRetStackBase) +
+                     FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE / 4;
+        return;
+      }
+      if (thread->JITGuardPage && faddr - thread->JITGuardPage < 4096) {
+        if (auto* fp = Fpsimd(static_cast<ucontext_t*>(ucontext))) {
+          FEXCore::UncheckedLongJump::ManuallyLoadJumpBuf(thread->RestartJump,
+              thread->JITGuardOverflowArgument, reinterpret_cast<uint64_t*>(m.regs), fp->v,
+              reinterpret_cast<uint64_t*>(&m.pc));
+          return;
+        }
+      }
+    }
+    if (sig == SIGBUS && info->si_code == BUS_ADRALN &&
+        thread->CTX && thread->CTX->IsAddressInCodeBuffer(thread, m.pc)) {
+      if (const auto skip = FEXCore::ArchHelpers::Arm64::HandleUnalignedAccess(
+              thread, g_unaligned_type, m.pc, reinterpret_cast<uint64_t*>(m.regs))) {
+        m.pc += *skip;
+        return;
+      }
+    }
     uint64_t rip = thread->CurrentFrame->State.rip;
     // 精确 guest RIP：从 host PC 还原（gow3 同法），定位真正崩溃指令而非块首
     if (thread->CTX && thread->CTX->IsAddressInCodeBuffer(thread, mctx.pc)) {
@@ -435,6 +483,8 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     mprotect(cr_alloc + page, cr_size, PROT_READ | PROT_WRITE);
     thread->CallRetStackBase = cr_alloc + page;
     state.callret_sp = reinterpret_cast<uint64_t>(cr_alloc + page) + cr_size / 4;
+    t_callret_alloc = reinterpret_cast<uint64_t>(cr_alloc);
+    t_callret_alloc_size = cr_size + 2 * page;
   }
   // gow3：保存 gregs+rip；HandleCallback 自带 PushCalleeSavedRegisters，保 r14/r15 跨 syscall
   uint64_t saved[16];
