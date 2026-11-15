@@ -196,6 +196,7 @@ struct GuestBridge::Impl {
   uint64_t guest_size = 0;
   uint8_t* veneer_space = nullptr;
   uint64_t exit_hlt = 0;      // 返回蹦床：HLT 桩的 guest 地址
+  uint64_t boot_stub = 0;     // boot 引导桩：跳过 HandleCallback 蹦床指向 EntryParams，jmp rax 到真实入口
   uint64_t tcb = 0;           // guest TCB（fs/gs 基址，libc TLS 访问需要）
   uint32_t next_id = 1;       // id 0 保留给 exit_hlt
   std::unordered_map<uint32_t, Veneer> by_id;
@@ -224,6 +225,11 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   impl_->exit_hlt = vbase;
   std::memset(impl_->veneer_space, 0, kVeneerSize);
   impl_->veneer_space[0] = 0x0F; impl_->veneer_space[1] = 0x3E;  // CALLBACKRET(0f3e)：HandleCallback 返回蹦床
+  // boot 引导桩（veneer 空间 +0x10000）：add rsp,16 跳过蹦床→[rsp]=EntryParams[0]；jmp rax(=真实入口)
+  impl_->boot_stub = vbase + 0x10000;
+  uint8_t* bs = impl_->veneer_space + 0x10000;
+  bs[0]=0x48; bs[1]=0x83; bs[2]=0xC4; bs[3]=0x10;  // add rsp, 16
+  bs[4]=0xFF; bs[5]=0xE0;                          // jmp rax
 
   // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted/shadPS4）。
   // shadPS4 Tcb 布局：[0]=self [8]=dtv [16]=thread [24/32]=spare [40]=canary [48]=fiber。
@@ -313,10 +319,10 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   uint64_t rsp;
   const bool boot_entry = stack_init_count >= 2;
   if (boot_entry) {
-    // 仿 shadPS4 RunMainEntry：jmp 无返回地址，rsp 8mod16，[rsp]=EntryParams[0],[rsp+8]=[1]
-    rsp = sp - 8;
-    reinterpret_cast<uint64_t*>(rsp)[0] = stack_init[0];
-    reinterpret_cast<uint64_t*>(rsp)[1] = stack_init[1];
+    // HandleCallback 蹦床在 [sp-8]；EntryParams 放 sp+8/sp+16，引导桩 add rsp,16 后 [rsp]=EntryParams[0]（8mod16）
+    rsp = sp + 8;
+    reinterpret_cast<uint64_t*>(sp + 8)[0] = stack_init[0];
+    reinterpret_cast<uint64_t*>(sp + 16)[0] = stack_init[1];
   } else {
     rsp = sp + 8;  // HandleCallback 在 RSP-16 压 CALLBACKRET 蹦床
   }
@@ -342,7 +348,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
                        FEXCore::X86State::REG_RDX, FEXCore::X86State::REG_RCX,
                        FEXCore::X86State::REG_R8,  FEXCore::X86State::REG_R9};
   for (unsigned i = 0; i < count && i < 6; ++i) state.gregs[regs[i]] = args[i];
-  state.gregs[FEXCore::X86State::REG_RAX] = 0;
+  state.gregs[FEXCore::X86State::REG_RAX] = boot_entry ? entry : 0;  // boot：引导桩 jmp rax 到真实入口
   thread->CurrentFrame->Pointers.ThunkCallbackRet = impl_->exit_hlt;
   impl_->signals.callback_ret_addr = impl_->exit_hlt;
 
@@ -374,7 +380,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   uint64_t ret = 0;
   if (sigsetjmp(t_exit_jmp, 1) == 0) {
     if (boot_entry) {
-      impl_->ctx->ExecuteThread(thread);  // boot：无返回蹦床，eboot 经 ProgramExit/HLT 退出
+      impl_->ctx->HandleCallback(thread, impl_->boot_stub);  // 引导桩：跳蹦床→EntryParams→jmp 真实入口（保寄存器）
     } else {
       impl_->ctx->HandleCallback(thread, entry);
     }
