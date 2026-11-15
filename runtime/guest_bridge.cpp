@@ -302,6 +302,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   // 强制关闭会破坏 256 位 AVX 翻译）。仅关 SVE256（真机 128 位向量长；qemu 误报 256 会生成非法指令）。
   features.SupportsSVE256 = false;  // fb925d6f 直接位域
   if (getenv("DIVA_NO_SVE")) { features.SupportsSVE128 = false; }  // 判决实验：对齐真机 SVE128=0
+  if (getenv("DIVA_NO_TSOIMM9")) { features.SupportsTSOImm9 = false; }  // qemu LDAPUR/STLUR 判决：关 FEAT_LRCPC2
   features.SupportsSVEBitPerm = false;
   std::fprintf(stderr, "[bridge] HostFeatures: AVX=%d SVE128=%d SVE256=%d\n",
                (int)features.SupportsAVX, (int)features.SupportsSVE128, (int)features.SupportsSVE256);

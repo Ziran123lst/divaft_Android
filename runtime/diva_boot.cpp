@@ -575,12 +575,12 @@ static bool RunSelfTests() {
         [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return 42; });
     uint64_t code_addr = base + 0x25000;
     std::vector<uint8_t> c;
-    MovRegImm64(c, 1, 0x1234);              // rcx = 0x1234
+    MovRegImm64(c, 3, 0x1234);              // rbx = 0x1234（rcx 被 syscall 设返回RIP 是正确x86行为，改用 callee-saved rbx）
     MovRegImm64(c, 7, 7);
     MovRegImm64(c, 6, 5);
     EmitCallRel32(c, code_addr, gv);        // call veneer
     Emit(c, {0xC5, 0xFC, 0x57, 0xC0});      // vxorps ymm0
-    Emit(c, {0x48, 0x89, 0xC8});            // mov rax, rcx
+    Emit(c, {0x48, 0x89, 0xD8});            // mov rax, rbx
     Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
@@ -612,17 +612,29 @@ static bool RunSelfTests() {
     Emit(c, {0xBF, 0x70, 0x00, 0x00, 0x00});
     Emit(c, {0x49, 0x89, 0xD6});
     EmitCallRel32(c, code_addr, cv);
+    MovRegImm64(c, 7, base + 0x2D800);      // rdi = dbg
+    Emit(c, {0x4C, 0x89, 0x3F});            // [dbg]=r15
+    Emit(c, {0x48, 0x89, 0x47, 0x08});      // [dbg+8]=rax
     Emit(c, {0x49, 0x8B, 0x4F, 0x08});
     Emit(c, {0x48, 0x89, 0xC3});
+    Emit(c, {0x48, 0x89, 0x4F, 0x10});      // [dbg+16]=rcx
+    Emit(c, {0x48, 0x89, 0x5F, 0x18});      // [dbg+24]=rbx
     // 无 vxorps
     Emit(c, {0x48, 0x89, 0x0B});
     Emit(c, {0x48, 0x89, 0x4B, 0x08});
     Emit(c, {0x48, 0x89, 0x4B, 0x10});
     Emit(c, {0x66, 0xC7, 0x43, 0x18, 0x00, 0x00});
     Emit(c, {0x48, 0x8B, 0x03});
+    Emit(c, {0x48, 0x89, 0x47, 0x20});        // [dbg+32]=rax(load结果)
     Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    auto* dbg = reinterpret_cast<const uint64_t*>(base + 0x2D800);
+    std::fprintf(stderr, "[cn-dbg] r15=%llx rax(hle)=%llx rcx=[r15+8]=%llx rbx=%llx want_data=0x101f800\n",
+        (unsigned long long)dbg[0], (unsigned long long)dbg[1], (unsigned long long)dbg[2], (unsigned long long)dbg[3]);
+    std::fprintf(stderr, "[cn-dbg] host读[ret_ptr]=%llx (应=cafe若STLUR写对)\n",
+        (unsigned long long)*reinterpret_cast<const uint64_t*>(ret_ptr));
+    std::fprintf(stderr, "[cn-dbg] guest内load结果=%llx\n", (unsigned long long)dbg[4]);
     bool ok = got == 0xCAFE;
     if (ok) ++passed;
     std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0xcafe)\n",
