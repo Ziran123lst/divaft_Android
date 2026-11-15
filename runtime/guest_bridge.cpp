@@ -81,7 +81,10 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
     std::fprintf(stderr, "\n[guest-crash] gregs:");
     for (int i = 0; i < 16; ++i)
       std::fprintf(stderr, " r%d=%llx", i, (unsigned long long)gregs[i]);
-    std::fprintf(stderr, "\n");
+    std::fprintf(stderr, "\n[guest-crash] hostregs:");
+    for (int i = 0; i < 31; ++i)
+      std::fprintf(stderr, " x%d=%llx", i, (unsigned long long)mctx.regs[i]);
+    std::fprintf(stderr, " sp=%llx\n", (unsigned long long)mctx.sp);
     // 调用者上下文：栈回溯 + 调用者代码字节（定位 eboot 触发指令序列）。
     // veneer 经 call 进入，[rsp]=返回地址；dump 调用者前 48 后 16 字节供反汇编。
     const uint64_t crash_rsp = gregs[FEXCore::X86State::REG_RSP];
@@ -302,7 +305,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   sp = (sp - stack_args * 8) & ~uint64_t(15);
   for (unsigned i = 0; i < stack_args; ++i)
     reinterpret_cast<uint64_t*>(sp)[i] = args[6 + i];
-  uint64_t rsp = sp + 16;  // 实验：16对齐入口（HandleCallback-16→sp，0mod16）
+  uint64_t rsp = sp + 8;
 
   auto* thread = impl_->ctx->CreateThread(nullptr);
   if (!thread) { munmap(stack, kGuestStack); return 0; }
