@@ -330,7 +330,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     reinterpret_cast<uint64_t*>(boot_ep_page)[1] = stack_init[1];
     mmap(reinterpret_cast<void*>(stack_top), 0x1000, PROT_NONE,
          MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-    rsp = stack_top + 8;  // HandleCallback -16 → stack_top-8（蹦床在页顶最后8字节）
+    rsp = stack_top - 8;  // entry_rsp 贴页顶-8；prologue 向下写有效页，向上错位>=stack_top 触保护页
   } else if (boot_entry) {
     rsp = sp + 8;
     reinterpret_cast<uint64_t*>(sp + 8)[0] = stack_init[0];
