@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 URL="https://github.com/FEX-Emu/FEX.git"
-REV="ea43314f040633c76fb5891ff31d8a7c3dc533b8"
+REV="fb925d6fc5cc8576bf0f9ae6978fc6d912485593"  # gow3 真机验证版（zFitness/gow3_android arm）
 DEST=${FEX_SRC:-"$ROOT/third_party/fex"}
 
 SUBMODULES=(
