@@ -257,13 +257,13 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
     FEXCore::Config::Set(FEXCore::Config::CONFIG_DUMPIR, "/tmp/fexir");
   }
   FEXCore::Config::ReloadMetaLayer();
-  auto features = FEX::FetchHostFeatures(true);
+  auto features = FEX::FetchHostFeatures();  // fb925d6f 无参
   // 真机 Cortex-X4/A720 有 SVE2-128：保留 SVE128 自动探测（AVX128 路径内部依赖 SVE128，
   // 强制关闭会破坏 256 位 AVX 翻译）。仅关 SVE256（真机 128 位向量长；qemu 误报 256 会生成非法指令）。
-  features.ProcessFeatures.SupportsSVE256 = false;
+  features.SupportsSVE256 = false;  // fb925d6f 直接位域
   features.SupportsSVEBitPerm = false;
   std::fprintf(stderr, "[bridge] HostFeatures: AVX=%d SVE128=%d SVE256=%d\n",
-               (int)features.SupportsAVX(), (int)features.SupportsSVE128(), (int)features.SupportsSVE256());
+               (int)features.SupportsAVX, (int)features.SupportsSVE128, (int)features.SupportsSVE256);
   impl_->ctx = FEXCore::Context::Context::CreateNewContext(features);
   if (!impl_->ctx) return false;
   impl_->syscalls = fextl::make_unique<VeneerSyscallHandler>(&impl_->by_id, guest_base, guest_size);
