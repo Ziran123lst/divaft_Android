@@ -228,7 +228,7 @@ bool GuestBridge::Init(uint64_t guest_base, uint64_t guest_size) {
   // boot 引导桩（veneer 空间 +0x10000）：add rsp,16 跳过蹦床→[rsp]=EntryParams[0]；jmp rax(=真实入口)
   impl_->boot_stub = vbase + 0x10000;
   uint8_t* bs = impl_->veneer_space + 0x10000;
-  bs[0]=0x48; bs[1]=0x83; bs[2]=0xC4; bs[3]=0x10;  // add rsp, 16
+  bs[0]=0x48; bs[1]=0x83; bs[2]=0xC4; bs[3]=0x0C;  // add rsp, 12（补偿 fb925d6f HandleCallback 实测 -12，使 eboot 入口=sp+8 8mod16）
   bs[4]=0xFF; bs[5]=0xE0;                          // jmp rax
 
   // guest TCB：libc 经 fs/gs 段访问 TLS/线程指针，需建立 TCB 并设 fs/gs 基址（参照 uncharted/shadPS4）。
