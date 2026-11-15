@@ -789,6 +789,27 @@ static bool RunSelfTests() {
                 "r15_sys", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
+  // rsi 跨 vmovups 保存：mov rsi,0x1234; vmovups xmm0,[mem]; mov rax,rsi。
+  {
+    ++total;
+    uint64_t code_addr = base + 0x2E000;
+    uint64_t mem_addr = base + 0x2E800;
+    std::vector<uint8_t> c;
+    MovRegImm64(c, 6, 0x1234);              // mov rsi, 0x1234
+    // vmovups xmm0, [mem]  via rip-rel: C5 F8 10 05 <disp32>
+    int64_t disp = (int64_t)mem_addr - (int64_t)(code_addr + c.size() + 8);
+    Emit(c, {0xC5, 0xF8, 0x10, 0x05});
+    for (int i=0;i<4;++i) c.push_back((disp>>(i*8))&0xFF);
+    Emit(c, {0x48, 0x89, 0xF0});            // mov rax, rsi
+    Emit(c, {0xC3});
+    std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
+    uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
+    bool ok = got == 0x1234;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x1234)\n",
+                "rsi_avx", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
   bridge.Shutdown();
   std::printf("[divaft-guest] %s (%d/%d)\n",
               passed == total ? "GUEST_EXEC_PASS" : "GUEST_EXEC_FAIL", passed, total);

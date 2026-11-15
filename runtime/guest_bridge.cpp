@@ -121,6 +121,26 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
           std::fprintf(stderr, " %02x", cp[i]);
         std::fprintf(stderr, "\n");
       }
+      // 帧指针回溯：[rbp+8]=返回地址，走 4 层，dump 每层调用方代码字节
+      uint64_t fp = gregs[FEXCore::X86State::REG_RBP];
+      for (int frame = 0; frame < 4; ++frame) {
+        if (fp <= 0x10000 || fp >= 0x100000000ULL) break;
+        const uint64_t* fpp = reinterpret_cast<const uint64_t*>(fp);
+        const uint64_t ra = fpp[1];
+        std::fprintf(stderr, "[bt%d] rbp=%llx ret=%llx", frame, (unsigned long long)fp, (unsigned long long)ra);
+        if (ra > 0x10000 && ra < 0x100000000ULL) {
+          const uint8_t* cp = reinterpret_cast<const uint8_t*>(ra);
+          {  // 每层调用方 dump 到文件供反汇编
+            char fn[64]; snprintf(fn, sizeof(fn), "/tmp/caller%d.bin", frame);
+            if (FILE* f = fopen(fn, "wb")) { fwrite(cp - 200, 1, 240, f); fclose(f); }
+            std::fprintf(stderr, " caller%d_base=%llx", frame, (unsigned long long)(ra - 200));
+          }
+          std::fprintf(stderr, " code:");
+          for (int i = -24; i < 8; ++i) std::fprintf(stderr, " %02x", cp[i]);
+        }
+        std::fprintf(stderr, "\n");
+        fp = fpp[0];
+      }
     }
     siglongjmp(t_exit_jmp, 2);
   }
