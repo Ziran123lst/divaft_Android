@@ -232,7 +232,10 @@ bool DivaRuntime::Boot() {
                (unsigned long long)entry_, (unsigned long long)params,
                (unsigned long long)exit_fn);
   uint64_t args[2] = {params, exit_fn};
-  bridge_.CallGuest(entry_, args, 2);
+  // 仿 shadPS4 RunMainEntry：把 EntryParams 前 16 字节压栈（crt0 在栈顶找它）
+  uint64_t stack_init[2] = {params ? *reinterpret_cast<uint64_t*>(params) : 0,
+                            params ? *reinterpret_cast<uint64_t*>(params + 8) : 0};
+  bridge_.CallGuest(entry_, args, 2, stack_init, 2);
   return true;
 }
 

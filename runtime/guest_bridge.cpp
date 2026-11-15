@@ -285,6 +285,11 @@ uint64_t GuestBridge::DispatchSyscall(uint32_t veneer_id, const uint64_t* sysv_a
 }
 
 uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned count) {
+  return CallGuest(entry, args, count, nullptr, 0);
+}
+
+uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned count,
+                                const uint64_t* stack_init, unsigned stack_init_count) {
 #ifdef DIVAFT_WITH_FEX
   if (!impl_->initialized || !impl_->ctx) return 0;
   // per-call 私有 guest 栈：低 4G（规避 FEX-qemu 高地址指针截断），并发各用独立栈。
@@ -305,6 +310,9 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   sp = (sp - stack_args * 8) & ~uint64_t(15);
   for (unsigned i = 0; i < stack_args; ++i)
     reinterpret_cast<uint64_t*>(sp)[i] = args[6 + i];
+  // 仿 RunMainEntry：EntryParams 压栈顶（OpenOrbis crt0 期望）。放在 sp 起（trampoline 上方）。
+  for (unsigned i = 0; i < stack_init_count; ++i)
+    reinterpret_cast<uint64_t*>(sp)[stack_args + i] = stack_init[i];
   uint64_t rsp = sp + 8;
 
   auto* thread = impl_->ctx->CreateThread(nullptr);

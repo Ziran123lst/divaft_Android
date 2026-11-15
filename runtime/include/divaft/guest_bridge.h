@@ -52,6 +52,9 @@ public:
 
   // 从当前 guest 线程调用 guest 函数（host→guest），返回 RAX。
   uint64_t CallGuest(uint64_t entry, const uint64_t* args, unsigned count);
+  // stack_init：额外压入 guest 栈顶的 qwords（仿 PS4 RunMainEntry 压 EntryParams）
+  uint64_t CallGuest(uint64_t entry, const uint64_t* args, unsigned count,
+                     const uint64_t* stack_init, unsigned stack_init_count);
 
   // FEX 陷入分发：veneer syscall 到达时调用，按 id 找宿主函数并桥接参数。
   uint64_t DispatchSyscall(uint32_t veneer_id, const uint64_t* sysv_args,
