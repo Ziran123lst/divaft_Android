@@ -321,13 +321,22 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
     reinterpret_cast<uint64_t*>(sp)[i] = args[6 + i];
   uint64_t rsp;
   const bool boot_entry = stack_init_count >= 2;
-  if (boot_entry) {
-    // HandleCallback 蹦床在 [sp-8]；EntryParams 放 sp+8/sp+16，引导桩 add rsp,16 后 [rsp]=EntryParams[0]（8mod16）
+  uint64_t boot_ep_page = 0;
+  if (boot_entry && getenv("DIVA_GUARD_PAGE")) {
+    // 保护页抓现行：EntryParams 放栈底独立页(经 rdi)，entry_rsp 贴栈顶页顶-8，
+    // 栈顶上方一页 PROT_NONE。任何向上栈访问(>=stack_top)立即 SIGSEGV 拿 culprit RIP。
+    boot_ep_page = reinterpret_cast<uint64_t>(stack);
+    reinterpret_cast<uint64_t*>(boot_ep_page)[0] = stack_init[0];
+    reinterpret_cast<uint64_t*>(boot_ep_page)[1] = stack_init[1];
+    mmap(reinterpret_cast<void*>(stack_top), 0x1000, PROT_NONE,
+         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    rsp = stack_top + 8;  // HandleCallback -16 → stack_top-8（蹦床在页顶最后8字节）
+  } else if (boot_entry) {
     rsp = sp + 8;
     reinterpret_cast<uint64_t*>(sp + 8)[0] = stack_init[0];
     reinterpret_cast<uint64_t*>(sp + 16)[0] = stack_init[1];
   } else {
-    rsp = sp + 8;  // HandleCallback 在 RSP-16 压 CALLBACKRET 蹦床
+    rsp = sp + 8;
   }
 
   auto* thread = impl_->ctx->CreateThread(nullptr);
@@ -351,6 +360,7 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
                        FEXCore::X86State::REG_RDX, FEXCore::X86State::REG_RCX,
                        FEXCore::X86State::REG_R8,  FEXCore::X86State::REG_R9};
   for (unsigned i = 0; i < count && i < 6; ++i) state.gregs[regs[i]] = args[i];
+  if (boot_ep_page) state.gregs[FEXCore::X86State::REG_RDI] = boot_ep_page;  // eboot 经 rdi 读 EntryParams
   state.gregs[FEXCore::X86State::REG_RAX] = boot_entry ? entry : 0;  // boot：引导桩 jmp rax 到真实入口
   thread->CurrentFrame->Pointers.ThunkCallbackRet = impl_->exit_hlt;
   impl_->signals.callback_ret_addr = impl_->exit_hlt;
@@ -382,8 +392,10 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
                (unsigned long long)reinterpret_cast<uint64_t>(stack), (unsigned long long)impl_->tcb);
   uint64_t ret = 0;
   if (sigsetjmp(t_exit_jmp, 1) == 0) {
-    if (boot_entry) {
-      impl_->ctx->HandleCallback(thread, impl_->boot_stub);  // 引导桩：跳蹦床→EntryParams→jmp 真实入口（保寄存器）
+    if (boot_entry && boot_ep_page) {
+      impl_->ctx->HandleCallback(thread, entry);  // 保护页模式：EntryParams 经 rdi，直接进真实入口
+    } else if (boot_entry) {
+      impl_->ctx->HandleCallback(thread, impl_->boot_stub);
     } else {
       impl_->ctx->HandleCallback(thread, entry);
     }
