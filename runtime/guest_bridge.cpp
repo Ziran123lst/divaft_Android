@@ -42,20 +42,10 @@ constexpr size_t kGuestStack = 1 * 1024 * 1024;  // 每次 CallGuest 的私有 g
 // 栈布局（syscall 时）：[rsp+0]=arg4 [rsp+8]=arg5 [rsp+16]=arg6 [rsp+24]=返回地址 [rsp+32..]=溢出参。
 static void EmitVeneer(uint8_t* p, uint32_t id) {
   size_t i = 0;
-  // divaft workaround：FEX syscall 恢复路径损坏 callee-saved r12-r15（r15←RCX返回RIP，
-  // 最小用例 r15_sys 实锤）。veneer 在 syscall 前后 push/pop 保存恢复，绕过该 bug。
-  p[i++] = 0x41; p[i++] = 0x54;                 // push r12
-  p[i++] = 0x41; p[i++] = 0x55;                 // push r13
-  p[i++] = 0x41; p[i++] = 0x56;                 // push r14
-  p[i++] = 0x41; p[i++] = 0x57;                 // push r15
   p[i++] = 0x49; p[i++] = 0x89; p[i++] = 0xCA;  // mov r10, rcx（arg4）
   p[i++] = 0xB8;                                 // mov eax, id
   std::memcpy(p + i, &id, 4); i += 4;
   p[i++] = 0x0F; p[i++] = 0x05;                 // syscall
-  p[i++] = 0x41; p[i++] = 0x5F;                 // pop r15
-  p[i++] = 0x41; p[i++] = 0x5E;                 // pop r14
-  p[i++] = 0x41; p[i++] = 0x5D;                 // pop r13
-  p[i++] = 0x41; p[i++] = 0x5C;                 // pop r12
   p[i++] = 0xC3;                                 // ret
 }
 
@@ -199,7 +189,7 @@ public:
     const uint64_t rsp = gregs[FEXCore::X86State::REG_RSP];
     if (rsp) {
       // veneer push r12-r15（32B）：[rsp..24]=保存寄存器 [rsp+32]=返回地址 [rsp+40..]=第7+溢出参
-      std::memcpy(&int_args[6], reinterpret_cast<const void*>(rsp + 40), 8 * sizeof(uint64_t));
+      std::memcpy(&int_args[6], reinterpret_cast<const void*>(rsp + 8), 8 * sizeof(uint64_t));
     }
     // 浮点参 XMM0..7 低 64 位（参照 uncharted：st.xmm.sse.data[i][0]）。
     double fp_args[8];

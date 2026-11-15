@@ -612,29 +612,17 @@ static bool RunSelfTests() {
     Emit(c, {0xBF, 0x70, 0x00, 0x00, 0x00});
     Emit(c, {0x49, 0x89, 0xD6});
     EmitCallRel32(c, code_addr, cv);
-    MovRegImm64(c, 7, base + 0x2D800);      // rdi = dbg
-    Emit(c, {0x4C, 0x89, 0x3F});            // [dbg]=r15
-    Emit(c, {0x48, 0x89, 0x47, 0x08});      // [dbg+8]=rax
     Emit(c, {0x49, 0x8B, 0x4F, 0x08});
     Emit(c, {0x48, 0x89, 0xC3});
-    Emit(c, {0x48, 0x89, 0x4F, 0x10});      // [dbg+16]=rcx
-    Emit(c, {0x48, 0x89, 0x5F, 0x18});      // [dbg+24]=rbx
     // 无 vxorps
     Emit(c, {0x48, 0x89, 0x0B});
     Emit(c, {0x48, 0x89, 0x4B, 0x08});
     Emit(c, {0x48, 0x89, 0x4B, 0x10});
     Emit(c, {0x66, 0xC7, 0x43, 0x18, 0x00, 0x00});
     Emit(c, {0x48, 0x8B, 0x03});
-    Emit(c, {0x48, 0x89, 0x47, 0x20});        // [dbg+32]=rax(load结果)
     Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
-    auto* dbg = reinterpret_cast<const uint64_t*>(base + 0x2D800);
-    std::fprintf(stderr, "[cn-dbg] r15=%llx rax(hle)=%llx rcx=[r15+8]=%llx rbx=%llx want_data=0x101f800\n",
-        (unsigned long long)dbg[0], (unsigned long long)dbg[1], (unsigned long long)dbg[2], (unsigned long long)dbg[3]);
-    std::fprintf(stderr, "[cn-dbg] host读[ret_ptr]=%llx (应=cafe若STLUR写对)\n",
-        (unsigned long long)*reinterpret_cast<const uint64_t*>(ret_ptr));
-    std::fprintf(stderr, "[cn-dbg] guest内load结果=%llx\n", (unsigned long long)dbg[4]);
     bool ok = got == 0xCAFE;
     if (ok) ++passed;
     std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0xcafe)\n",
@@ -808,6 +796,58 @@ static bool RunSelfTests() {
     if (ok) ++passed;
     std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x1234)\n",
                 "rsi_avx", ok ? "PASS" : "FAIL", (unsigned long long)got);
+  }
+
+  // 判别实验：复刻 boot 空指针链 A→B→C（rsi 经 call 传入→B 存局部→C 解引用）。
+  // A: 局部计数器=0x42, call HLE(new), lea rsi=&计数器, call B。B: vmovups+mov [rbp-0x70],rsi, lea rdx, call C。
+  // C: mov r14,rdx; mov rax,[r14]; mov eax,[rax]; 存 result。期望 got=0x42。
+  {
+    ++total;
+    uint64_t A = base + 0x2F000, B = base + 0x2F800, C = base + 0x30000, R = base + 0x30800;
+    uint64_t nv = bridge.ExposeHost("chain_new",
+        [](const uint64_t*, unsigned, const double*, divaft::HleReturn*) -> uint64_t { return 0x9000000; });
+    // C
+    std::vector<uint8_t> cc;
+    Emit(cc, {0x55}); Emit(cc, {0x48,0x89,0xE5}); Emit(cc, {0x41,0x56});
+    Emit(cc, {0x49,0x89,0xD6});              // mov r14,rdx
+    Emit(cc, {0x49,0x8B,0x06});              // mov rax,[r14]
+    Emit(cc, {0x8B,0x00});                   // mov eax,[rax]
+    { int64_t d=(int64_t)R-(int64_t)(C+cc.size()+7); Emit(cc,{0x48,0x89,0x05});
+      for(int i=0;i<4;++i) cc.push_back((d>>(i*8))&0xFF); }   // mov [rip+R],rax
+    Emit(cc, {0x41,0x5E}); Emit(cc, {0x5D}); Emit(cc, {0xC3});
+    std::memcpy((void*)C, cc.data(), cc.size());
+    // B
+    std::vector<uint8_t> cb;
+    Emit(cb, {0x55}); Emit(cb, {0x48,0x89,0xE5});
+    Emit(cb, {0x41,0x57}); Emit(cb, {0x41,0x56}); Emit(cb, {0x53});
+    Emit(cb, {0x48,0x83,0xEC,0x78});         // sub rsp,0x78
+    Emit(cb, {0xC5,0xF8,0x10,0x45,0xB0});    // vmovups xmm0,[rbp-0x50]
+    Emit(cb, {0x48,0x89,0x75,0x90});         // mov [rbp-0x70],rsi
+    Emit(cb, {0x48,0x8D,0x55,0x90});         // lea rdx,[rbp-0x70]
+    EmitCallRel32(cb, B, C);
+    Emit(cb, {0x48,0x83,0xC4,0x78}); Emit(cb, {0x5B}); Emit(cb, {0x41,0x5E});
+    Emit(cb, {0x41,0x5F}); Emit(cb, {0x5D}); Emit(cb, {0xC3});
+    std::memcpy((void*)B, cb.data(), cb.size());
+    // A
+    std::vector<uint8_t> ca;
+    Emit(ca, {0x55}); Emit(ca, {0x48,0x89,0xE5}); Emit(ca, {0x48,0x83,0xEC,0x40});
+    Emit(ca, {0xC7,0x45,0xCC,0x42,0x00,0x00,0x00});  // mov dword[rbp-0x34],0x42
+    Emit(ca, {0xBF,0x70,0x00,0x00,0x00});    // mov edi,0x70
+    EmitCallRel32(ca, A, nv);                // call HLE new
+    Emit(ca, {0x48,0x8D,0x75,0xCC});         // lea rsi,[rbp-0x34]
+    Emit(ca, {0xBF,0x34,0x12,0x00,0x00});    // mov edi,0x1234
+    EmitCallRel32(ca, A, B);
+    { int64_t d=(int64_t)R-(int64_t)(A+ca.size()+7); Emit(ca,{0x48,0x8B,0x05});
+      for(int i=0;i<4;++i) ca.push_back((d>>(i*8))&0xFF); }   // mov rax,[rip+R]
+    Emit(ca, {0x48,0x83,0xC4,0x40}); Emit(ca, {0x5D}); Emit(ca, {0xC3});
+    std::memcpy((void*)A, ca.data(), ca.size());
+    uint64_t got = bridge.CallGuest(A, nullptr, 0);
+    uint64_t mem = *reinterpret_cast<const uint64_t*>(R);
+    std::fprintf(stderr, "[chain-dbg] result_buf=0x%llx got=0x%llx\n",(unsigned long long)mem,(unsigned long long)got);
+    bool ok = got == 0x42;
+    if (ok) ++passed;
+    std::printf("[divaft-guest] %-10s : %s (got=0x%llx want=0x42)\n",
+                "rsi_chain", ok ? "PASS" : "FAIL", (unsigned long long)got);
   }
 
   bridge.Shutdown();
