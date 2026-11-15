@@ -310,10 +310,16 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
   sp = (sp - stack_args * 8) & ~uint64_t(15);
   for (unsigned i = 0; i < stack_args; ++i)
     reinterpret_cast<uint64_t*>(sp)[i] = args[6 + i];
-  // 仿 RunMainEntry：EntryParams 压栈顶（OpenOrbis crt0 期望）。放在 sp 起（trampoline 上方）。
-  for (unsigned i = 0; i < stack_init_count; ++i)
-    reinterpret_cast<uint64_t*>(sp)[stack_args + i] = stack_init[i];
-  uint64_t rsp = sp + 8;
+  uint64_t rsp;
+  const bool boot_entry = stack_init_count >= 2;
+  if (boot_entry) {
+    // 仿 shadPS4 RunMainEntry：jmp 无返回地址，rsp 8mod16，[rsp]=EntryParams[0],[rsp+8]=[1]
+    rsp = sp - 8;
+    reinterpret_cast<uint64_t*>(rsp)[0] = stack_init[0];
+    reinterpret_cast<uint64_t*>(rsp)[1] = stack_init[1];
+  } else {
+    rsp = sp + 8;  // HandleCallback 在 RSP-16 压 CALLBACKRET 蹦床
+  }
 
   auto* thread = impl_->ctx->CreateThread(nullptr);
   if (!thread) { munmap(stack, kGuestStack); return 0; }
@@ -367,7 +373,11 @@ uint64_t GuestBridge::CallGuest(uint64_t entry, const uint64_t* args, unsigned c
                (unsigned long long)reinterpret_cast<uint64_t>(stack), (unsigned long long)impl_->tcb);
   uint64_t ret = 0;
   if (sigsetjmp(t_exit_jmp, 1) == 0) {
-    impl_->ctx->HandleCallback(thread, entry);
+    if (boot_entry) {
+      impl_->ctx->ExecuteThread(thread);  // boot：无返回蹦床，eboot 经 ProgramExit/HLT 退出
+    } else {
+      impl_->ctx->HandleCallback(thread, entry);
+    }
     ret = state.gregs[FEXCore::X86State::REG_RAX];
   } else {
     ret = state.gregs[FEXCore::X86State::REG_RAX];
