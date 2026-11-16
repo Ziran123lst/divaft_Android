@@ -542,6 +542,8 @@ static bool RunSelfTests() {
     Emit(c, {0x48, 0x89, 0x4B, 0x10});        // mov [rbx+16], rcx
     Emit(c, {0x66, 0xC7, 0x43, 0x18, 0x00, 0x00});  // movw [rbx+24], 0
     Emit(c, {0x48, 0x8B, 0x03});              // mov rax, [rbx]（读回验证）
+    Emit(c, {0x48, 0x83, 0xC4, 0x20});        // add rsp,0x20（跳过 rax/rbx/r14/r15 槽——原测试漏了尾声!）
+    Emit(c, {0x5D});                          // pop rbp
     Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
@@ -620,6 +622,8 @@ static bool RunSelfTests() {
     Emit(c, {0x48, 0x89, 0x4B, 0x10});
     Emit(c, {0x66, 0xC7, 0x43, 0x18, 0x00, 0x00});
     Emit(c, {0x48, 0x8B, 0x03});
+    Emit(c, {0x48, 0x83, 0xC4, 0x20});        // add rsp,0x20（补尾声）
+    Emit(c, {0x5D});                          // pop rbp
     Emit(c, {0xC3});  // ret 到 CALLBACKRET 蹦床
     std::memcpy(reinterpret_cast<void*>(code_addr), c.data(), c.size());
     uint64_t got = bridge.CallGuest(code_addr, nullptr, 0);
