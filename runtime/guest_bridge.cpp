@@ -55,6 +55,7 @@ static void EmitVeneer(uint8_t* p, uint32_t id) {
 
 namespace {
 thread_local FEXCore::Core::InternalThreadState* t_active_thread = nullptr;
+static bool g_sys_dbg = getenv("DIVA_SYS_DBG") != nullptr;
 static FEXCore::SignalDelegator* g_delegator = nullptr;  // SRA 真值读取
 thread_local sigjmp_buf t_exit_jmp;
 constexpr uint8_t kHlt = 0xF4;
@@ -170,7 +171,9 @@ void HostSignalHandler(int sig, siginfo_t* info, void* ucontext) {
           const uint8_t* cp = reinterpret_cast<const uint8_t*>(ra);
           {  // 每层调用方 dump 到文件供反汇编
             char fn[64]; snprintf(fn, sizeof(fn), "/tmp/caller%d.bin", frame);
-            if (FILE* f = fopen(fn, "wb")) { fwrite(cp - 200, 1, 240, f); fclose(f); }
+            if (ra >= 0x10000 + 200 && ra + 40 < 0x100000000ULL) {
+              if (FILE* f = fopen(fn, "wb")) { fwrite(cp - 200, 1, 240, f); fclose(f); }
+            }
             std::fprintf(stderr, " caller%d_base=%llx", frame, (unsigned long long)(ra - 200));
           }
           std::fprintf(stderr, " code:");
@@ -210,11 +213,11 @@ public:
   void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
     auto& gregs = Frame->State.gregs;
     uint32_t id = static_cast<uint32_t>(gregs[FEXCore::X86State::REG_RAX]);
-    std::fprintf(stderr, "[sys-entry] id=%u rsp=0x%llx rip=0x%llx\n", id,
+    if (g_sys_dbg) std::fprintf(stderr, "[sys-entry] id=%u rsp=0x%llx rip=0x%llx\n", id,
                  (unsigned long long)gregs[FEXCore::X86State::REG_RSP],
                  (unsigned long long)Frame->State.rip);
     Frame->State.rip += 2;  // new FEX: handler 须自行推进 RIP 过 syscall(0F 05)，分发器按 State.rip 重入
-    std::fprintf(stderr, "[sys-dbg] enter rcx=%llx rbx=%llx rax=%llx rsp=%llx rip=%llx r12=%llx r13=%llx r14=%llx r15=%llx\n",
+    if (g_sys_dbg) std::fprintf(stderr, "[sys-dbg] enter rcx=%llx rbx=%llx rax=%llx rsp=%llx rip=%llx r12=%llx r13=%llx r14=%llx r15=%llx\n",
                  (unsigned long long)gregs[FEXCore::X86State::REG_RCX],
                  (unsigned long long)gregs[FEXCore::X86State::REG_RBX],
                  (unsigned long long)gregs[FEXCore::X86State::REG_RAX],
@@ -250,7 +253,7 @@ public:
     std::fprintf(stderr, "[sys-ret] %s a0=0x%llx -> 0x%llx\n", it->second.name.c_str(),
                  (unsigned long long)int_args[0], (unsigned long long)ret);
     gregs[FEXCore::X86State::REG_RAX] = ret;
-    std::fprintf(stderr, "[sys-dbg] exit  r12=%llx r13=%llx r14=%llx r15=%llx\n",
+    if (g_sys_dbg) std::fprintf(stderr, "[sys-dbg] exit  r12=%llx r13=%llx r14=%llx r15=%llx\n",
                  (unsigned long long)gregs[FEXCore::X86State::REG_R12],
                  (unsigned long long)gregs[FEXCore::X86State::REG_R13],
                  (unsigned long long)gregs[FEXCore::X86State::REG_R14],

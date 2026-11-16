@@ -13,6 +13,9 @@
 #include <ctime>
 #include <cerrno>
 #include <mutex>
+#include <random>
+#include <pthread.h>
+#include <condition_variable>
 #include <atomic>
 #include <string>
 
@@ -465,6 +468,111 @@ size_t RegisterLibcHle(HleWire& wire, GuestHeap* heap) {
     char* buf = reinterpret_cast<char*>(a[0]);
     if (!buf || a[1] == 0) return 0;
     return FormatGuest(buf, a[1], reinterpret_cast<const char*>(a[2]), va); });
+
+  // std::random_device()() → 宿主随机数（桩返回0会致随机种子恒定）
+  reg("_ZSt14_Random_devicev", [](const uint64_t*, unsigned) -> uint64_t {
+    static std::mt19937 rng{std::random_device{}()};
+    return rng(); });
+  // ---------------- C++ ABI guard（Meyers 单例懒初始化，返回0会跳过构造致空表崩溃）----------------
+  auto guard_acquire = [](const uint64_t* a, unsigned) -> uint64_t {
+    auto* g = reinterpret_cast<uint8_t*>(a[0]);
+    if (*g == 0) { *g = 1; return 1; }  // 首次：标记进行中，返回1让调用方跑构造
+    return 0;                            // 已初始化：跳过
+  };
+  auto guard_release = [](const uint64_t* a, unsigned) -> uint64_t {
+    *reinterpret_cast<uint8_t*>(a[0]) = 1; return 0;
+  };
+  auto guard_abort = [](const uint64_t* a, unsigned) -> uint64_t {
+    *reinterpret_cast<uint8_t*>(a[0]) = 0; return 0;
+  };
+  reg("internal__cxa_guard_acquire", guard_acquire);
+  reg("internal__cxa_guard_release", guard_release);
+  reg("internal__cxa_guard_abort", guard_abort);
+  reg("__cxa_guard_acquire", guard_acquire);
+  reg("__cxa_guard_release", guard_release);
+  reg("__cxa_guard_abort", guard_abort);
+  reg("__cxa_pure_virtual", [](const uint64_t*, unsigned) -> uint64_t {
+    std::fprintf(stderr, "[libc] __cxa_pure_virtual 调用！\n"); std::abort(); return 0; });
+  reg("_ZSt9terminatev", [](const uint64_t*, unsigned) -> uint64_t {
+    std::fprintf(stderr, "[libc] std::terminate 调用！\n"); std::abort(); return 0; });
+
+  // ---------------- MSVC 线程原语 _Mtx/_Cnd/_Thrd（宿主 backing，按值传 opaque 指针）----------------
+  reg("_Mtx_init", [](const uint64_t* a, unsigned) -> uint64_t {
+    *reinterpret_cast<uint64_t*>(a[0]) =
+        reinterpret_cast<uint64_t>(new std::recursive_mutex());
+    return 0; });
+  reg("_Mtx_destroy", [](const uint64_t* a, unsigned) -> uint64_t {
+    delete reinterpret_cast<std::recursive_mutex*>(*reinterpret_cast<uint64_t*>(a[0])); return 0; });
+  reg("_Mtx_lock", [](const uint64_t* a, unsigned) -> uint64_t {
+    reinterpret_cast<std::recursive_mutex*>(*reinterpret_cast<uint64_t*>(a[0]))->lock(); return 0; });
+  reg("_Mtx_unlock", [](const uint64_t* a, unsigned) -> uint64_t {
+    reinterpret_cast<std::recursive_mutex*>(*reinterpret_cast<uint64_t*>(a[0]))->unlock(); return 0; });
+  reg("_Mtx_trylock", [](const uint64_t* a, unsigned) -> uint64_t {
+    return reinterpret_cast<std::recursive_mutex*>(*reinterpret_cast<uint64_t*>(a[0]))->try_lock() ? 0 : 1; });
+  reg("_Mtx_current_owns", [](const uint64_t*, unsigned) -> uint64_t { return 1; });
+  reg("_Cnd_init", [](const uint64_t* a, unsigned) -> uint64_t {
+    *reinterpret_cast<uint64_t*>(a[0]) =
+        reinterpret_cast<uint64_t>(new std::condition_variable_any());
+    return 0; });
+  reg("_Cnd_destroy", [](const uint64_t* a, unsigned) -> uint64_t {
+    delete reinterpret_cast<std::condition_variable_any*>(*reinterpret_cast<uint64_t*>(a[0])); return 0; });
+  reg("_Cnd_signal", [](const uint64_t* a, unsigned) -> uint64_t {
+    reinterpret_cast<std::condition_variable_any*>(*reinterpret_cast<uint64_t*>(a[0]))->notify_one(); return 0; });
+  reg("_Cnd_wait", [](const uint64_t* a, unsigned) -> uint64_t {
+    auto* cv = reinterpret_cast<std::condition_variable_any*>(*reinterpret_cast<uint64_t*>(a[0]));
+    auto* mx = reinterpret_cast<std::recursive_mutex*>(*reinterpret_cast<uint64_t*>(a[1]));
+    std::unique_lock<std::recursive_mutex> lk(*mx);
+    cv->wait(lk); return 0; });
+  reg("_Cnd_timedwait", [](const uint64_t* a, unsigned) -> uint64_t {
+    auto* cv = reinterpret_cast<std::condition_variable_any*>(*reinterpret_cast<uint64_t*>(a[0]));
+    auto* mx = reinterpret_cast<std::recursive_mutex*>(*reinterpret_cast<uint64_t*>(a[1]));
+    std::unique_lock<std::recursive_mutex> lk(*mx);
+    cv->wait_for(lk, std::chrono::milliseconds(10)); return 0; });
+  reg("_Thrd_current", [](const uint64_t*, unsigned) -> uint64_t {
+    return (uint64_t)pthread_self(); });
+  reg("_Thrd_equal", [](const uint64_t* a, unsigned) -> uint64_t { return a[0]==a[1]?1:0; });
+  reg("_Thrd_join", [](const uint64_t*, unsigned) -> uint64_t { return 0; });
+
+  // ---------------- 时间（tm 前9个int为标准布局）----------------
+  auto read_tm = [](uint64_t g, std::tm& t) {
+    auto* gi = reinterpret_cast<const int*>(g);
+    t.tm_sec=gi[0]; t.tm_min=gi[1]; t.tm_hour=gi[2]; t.tm_mday=gi[3];
+    t.tm_mon=gi[4]; t.tm_year=gi[5]; t.tm_wday=gi[6]; t.tm_yday=gi[7]; t.tm_isdst=gi[8];
+  };
+  auto write_tm = [](uint64_t g, const std::tm& t) {
+    auto* gi = reinterpret_cast<int*>(g);
+    gi[0]=t.tm_sec; gi[1]=t.tm_min; gi[2]=t.tm_hour; gi[3]=t.tm_mday;
+    gi[4]=t.tm_mon; gi[5]=t.tm_year; gi[6]=t.tm_wday; gi[7]=t.tm_yday; gi[8]=t.tm_isdst;
+  };
+  reg("mktime", [read_tm](const uint64_t* a, unsigned) -> uint64_t {
+    std::tm t{}; read_tm(a[0], t); return (uint64_t)(int64_t)mktime(&t); });
+  reg("localtime", [write_tm](const uint64_t* a, unsigned) -> uint64_t {
+    static thread_local std::tm out; static thread_local int buf[9];
+    time_t tt = (time_t)(int64_t)*reinterpret_cast<const uint64_t*>(a[0]);
+    localtime_r(&tt, &out); write_tm((uint64_t)buf, out);
+    return (uint64_t)buf; });
+  reg("localtime_s", [read_tm,write_tm](const uint64_t* a, unsigned) -> uint64_t {
+    std::tm t{}; time_t tt=(time_t)(int64_t)*reinterpret_cast<const uint64_t*>(a[1]);
+    localtime_r(&tt,&t); write_tm(a[0],t); return 0; });
+  reg("gmtime_s", [write_tm](const uint64_t* a, unsigned) -> uint64_t {
+    std::tm t{}; time_t tt=(time_t)(int64_t)*reinterpret_cast<const uint64_t*>(a[1]);
+    gmtime_r(&tt,&t); write_tm(a[0],t); return 0; });
+  reg("strftime", [read_tm](const uint64_t* a, unsigned) -> uint64_t {
+    std::tm t{}; read_tm(a[3], t);
+    return strftime(reinterpret_cast<char*>(a[0]), (size_t)a[1],
+                    reinterpret_cast<const char*>(a[2]), &t); });
+
+  // ---------------- sscanf（转发寄存器/栈变参，输出指针为整数参）----------------
+  reg("sscanf", [](const uint64_t* a, unsigned) -> uint64_t {
+    return (uint64_t)(int64_t)sscanf(reinterpret_cast<const char*>(a[0]),
+        reinterpret_cast<const char*>(a[1]),
+        a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13]); });
+  reg("fgetpos", [](const uint64_t* a, unsigned) -> uint64_t {
+    fpos_t p; if (fgetpos(reinterpret_cast<FILE*>(a[0]), &p)!=0) return 1;
+    *reinterpret_cast<uint64_t*>(a[1]) = (uint64_t)p; return 0; });
+  reg("fsetpos", [](const uint64_t* a, unsigned) -> uint64_t {
+    fpos_t p = (fpos_t)*reinterpret_cast<const uint64_t*>(a[1]);
+    return fsetpos(reinterpret_cast<FILE*>(a[0]), &p)==0 ? 0 : 1; });
 
   return n;
 }
