@@ -1,8 +1,8 @@
 diff --git a/cpu/guest_cpu_aot.cpp b/cpu/guest_cpu_aot.cpp
-index 5d98660..b6ffdaa 100644
+index 5d98660..25fa6cf 100644
 --- a/cpu/guest_cpu_aot.cpp
 +++ b/cpu/guest_cpu_aot.cpp
-@@ -1069,6 +1069,39 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
+@@ -1069,6 +1069,74 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
      std::fprintf(stderr, "AOT: fault at host pc %p (%s), guest rsp %#llx, rip %#llx, depth %u\n", reinterpret_cast<void*>(pc),
                   pc >= E.so_lo && pc < E.so_hi ? "in a unit" : InCode(pc) ? "in guest code" : "elsewhere",
                   (unsigned long long)t->s->gregs[RSP], (unsigned long long)t->s->rip, t->depth);
@@ -32,6 +32,41 @@ index 5d98660..b6ffdaa 100644
 +            }
 +        };
 +        probe("rbx", g[3]); probe("rdi", g[7]);
++        // guest 栈回溯：dump 栈上像镜像返回地址的值
++        {
++            uint64_t sp = g[4];
++            if (sp >= 0x10000 && sp < 0x8000000000ull) {
++                const uint64_t* st = reinterpret_cast<const uint64_t*>(sp);
++                std::fprintf(stderr, "AOT: guest stack @%llx:", (unsigned long long)sp);
++                for (int i = 0; i < 64; ++i) {
++                    uint64_t v = st[i];
++                    if (v >= E.base && v < E.base + 0xc95852cull)
++                        std::fprintf(stderr, " [%d]=+%llx", i, (unsigned long long)(v - E.base));
++                }
++                std::fprintf(stderr, "\n");
++                uint64_t bp = g[5];
++                if (bp >= 0x10000 && bp < 0x8000000000ull) {
++                    const uint64_t* fb = reinterpret_cast<const uint64_t*>(bp);
++                    std::fprintf(stderr, "AOT: frame @rbp %llx:", (unsigned long long)bp);
++                    for (int i = -2; i < 10; ++i) {
++                        uint64_t v = fb[i];
++                        std::fprintf(stderr, " [%d]=%llx%s", i, (unsigned long long)v,
++                                     (v >= E.base && v < E.base + 0xc95852cull) ? "(code)" : "");
++                    }
++                    std::fprintf(stderr, "\n");
++                    // 沿 rbp 链回溯
++                    for (int depth = 0; depth < 8 && bp >= 0x10000 && bp < 0x8000000000ull; ++depth) {
++                        const uint64_t* f = reinterpret_cast<const uint64_t*>(bp);
++                        uint64_t ret = f[1], next = f[0];
++                        std::fprintf(stderr, "AOT: bt%d rbp=%llx ret=%llx(+%llx)\n", depth,
++                                     (unsigned long long)bp, (unsigned long long)ret,
++                                     (ret >= E.base && ret < E.base + 0xc95852cull) ? (unsigned long long)(ret - E.base) : 0ull);
++                        if (next <= bp || next >= 0x8000000000ull) break;
++                        bp = next;
++                    }
++                }
++            }
++        }
 +#if defined(__aarch64__) && defined(__linux__)
 +        const auto& mc = static_cast<const ucontext_t*>(ucontext)->uc_mcontext;
 +        std::fprintf(stderr, "AOT: hostregs:");
