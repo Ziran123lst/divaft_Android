@@ -62,3 +62,10 @@ GPL-2.0-or-later（与 FEX/shadPS4 生态一致）。游戏资产版权归 SEGA 
 ---
 
 内容由 AI 生成
+
+
+## AOT 路线（当前主线，2026-11-16 起）
+
+性能最优解：bb-recomp 静态重编译 + Bloodborne-Android 运行时适配。
+DIVA 已 100% 原生 ARM64 AOT，游戏执行到渲染阶段，图形管线 qemu+lavapipe 自主跑通。
+全部补丁/脚本/文档见 [aot/README.md](aot/README.md)，进度见 [docs/aot-progress-2026-11-17.md](docs/aot-progress-2026-11-17.md)。

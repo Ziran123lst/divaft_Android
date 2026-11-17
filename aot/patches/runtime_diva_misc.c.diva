@@ -1,0 +1,52 @@
+/* DIVA misc HLE: DiscMap, system service, NP trophy, app content, dialogs, rtc — offline behavior. */
+#include "runtime.h"
+#include <stdint.h>
+#include <string.h>
+
+typedef struct { float ratio; uint8_t reserved[128]; } SafeAreaInfo;
+
+static ABI int32_t discmap_7c98(char* path, int64_t off, int64_t nb, int* flags, int* r1, int* r2) {
+    (void)path;(void)off;(void)nb; if(flags)*flags=0; if(r1)*r1=0; if(r2)*r2=0; return 0;
+}
+static ABI int32_t discmap_8a82(char* path, int64_t off, int64_t nb, int* flags, int* r1, int* r2) {
+    (void)path;(void)off;(void)nb;(void)flags;(void)r1;(void)r2; return 0x80b90001;
+}
+static ABI int32_t discmap_e7eb(void) { return 0x80b90001; }
+static ABI int32_t discmap_pkg_size(int64_t fflags, int* r1, int* r2) { (void)fflags; if(r1)*r1=0; if(r2)*r2=0; return 0; }
+static ABI int32_t discmap_on_hdd(char* path, int64_t off, int64_t nb, int* ret) { (void)path;(void)off;(void)nb; if(ret)*ret=0; return 0; }
+static ABI int32_t sys_safe_area(SafeAreaInfo* info) { if(info) info->ratio=1.0f; return 0; }
+static ABI int32_t sys_disable_music(uint32_t a) { (void)a; return 0; }
+static ABI int32_t sys_reenable_music(uint32_t a) { (void)a; return 0; }
+static ABI int32_t np_trophy_unlock_state(uint32_t ctx, uint32_t handle, uint32_t* flags, uint32_t* count) {
+    (void)ctx;(void)handle; if(flags)*flags=0; if(count)*count=0; return 0;
+}
+static ABI int32_t appcontent_entitlement_key(uint32_t label, const void* ent, void* key) {
+    (void)label;(void)ent; if(key) memset(key,0,16); return 0;
+}
+static ABI int32_t common_dialog_is_used(void) { return 0; }
+static ABI int32_t screenshot_disable(void) { return 0; }
+static ABI int32_t screenshot_enable(void) { return 0; }
+static ABI int32_t videorec_set_info(uint32_t a) { (void)a; return 0; }
+static ABI int32_t shareplay_init(const void* a) { (void)a; return 0; }
+static ABI int32_t remoteplay_init(const void* a) { (void)a; return 0; }
+static ABI int32_t livestream_init(const void* a) { (void)a; return 0; }
+static ABI int32_t sysmodule_load_internal(uint16_t id, const void* arg) { (void)id;(void)arg; return 0; }
+static ABI int32_t rtc_tick_add_ticks(uint64_t* tick, uint64_t add) { if(tick)*tick+=add; return 0; }
+static ABI int32_t libc_heap_trace_info(void* a) { (void)a; return 0; }
+
+static const RuntimeExport exports[] = {
+    {"Func_7C980FFB0AA27E7A",discmap_7c98}, {"Func_8A828CAEE7EDD5E9",discmap_8a82},
+    {"Func_E7EBCE96E92F91F8",discmap_e7eb}, {"sceDiscMapGetPackageSize",discmap_pkg_size},
+    {"sceDiscMapIsRequestOnHDD",discmap_on_hdd},
+    {"sceSystemServiceGetDisplaySafeAreaInfo",sys_safe_area},
+    {"sceSystemServiceDisableMusicPlayer",sys_disable_music}, {"sceSystemServiceReenableMusicPlayer",sys_reenable_music},
+    {"sceNpTrophyGetTrophyUnlockState",np_trophy_unlock_state},
+    {"sceAppContentGetEntitlementKey",appcontent_entitlement_key},
+    {"sceCommonDialogIsUsed",common_dialog_is_used},
+    {"sceScreenShotDisable",screenshot_disable}, {"sceScreenShotEnable",screenshot_enable},
+    {"sceVideoRecordingSetInfo",videorec_set_info}, {"sceSharePlayInitialize",shareplay_init},
+    {"sceRemoteplayInitialize",remoteplay_init}, {"sceGameLiveStreamingInitialize",livestream_init},
+    {"sceSysmoduleLoadModuleInternalWithArg",sysmodule_load_internal},
+    {"sceRtcTickAddTicks",rtc_tick_add_ticks}, {"sceLibcHeapGetTraceInfo",libc_heap_trace_info},
+};
+uintptr_t runtime_diva_misc_resolve(const char* name) { return RUNTIME_LOOKUP(exports, name); }

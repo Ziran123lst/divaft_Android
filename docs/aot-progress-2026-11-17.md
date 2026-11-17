@@ -1,0 +1,26 @@
+# AOT 路线进度快照（2026-11-17）
+
+总完成度粗估 78%。
+
+| 阶段 | 状态 |
+|---|---|
+| 阶段2 CPU | 完成：DIVA 100% 原生 AOT（57133 单元 0 不可翻译），游戏本体原生执行到渲染阶段 |
+| 阶段3 图形 | 管线跑通：qemu+lavapipe 全 GPU 模式，327 HLE 符号，游戏提交真实 PM4 命令；shader 446/446 SPIR-V 已备（见 shader_build/） |
+| 阶段4 音频 | 最小 Ngs2 HLE 通（11 函数）；完整合成待做 |
+| HLE 导入 | 100% 解析（字典 709 + 别名 404 + 自写模块） |
+| App 壳 | 待做（Bloodborne-Android launcher 适配或 Termux 直跑） |
+
+## 当前停点
+eboot unit+0x555370（std::string 析构/SSO 清理路径）空指针解引用 address 0x4，
+发生在 sceGnmInsertPushMarker/PopMarker（shadPS4 HLE 正常处理）之后。
+0 桩状态下仍崩 → 非缺函数，是返回值语义或初始化状态问题。
+下一步：AOT 故障处理器加 guest 寄存器 dump（GuestState.gregs+rip）定位空值来源。
+
+## 验证命令
+见 aot/README.md 与 aot/scripts/run_qemu_gpu.sh。
+真机 Turnip（gen8 v5）为性能优化项，非阻塞——图形已可 qemu 自主调试。
+
+## 历史路线
+原 FEX-JIT 路线（runtime/）推进至 locale/iostream ABI 墙后转 AOT；
+其成果（加载器/HLE 契约 643 条/shader 全集提取与转换/插值回退）仍被 AOT 路线复用
+（contract.tsv 用于 NID 字典生成）。
