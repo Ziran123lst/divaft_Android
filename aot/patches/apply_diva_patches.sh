@@ -187,6 +187,24 @@ if 'runtime_diva_misc_resolve' not in s:
     assert s.count(old)==1; open(ba+'/src/runtime.c','w').write(s.replace(old,new))
 print('misc wired (real Ngs2 via shadPS4)')
 EOF
+# ---- bb-android: 最小 Ngs2 HLE（配套旧 libbbgpu 无 shadPS4 Ngs2 时；有效句柄解锁音频初始化）----
+cp "$SD/runtime_ngs2.c.diva" "$BA/src/runtime_ngs2.c"
+python3 - "$BA" <<'PYEOF'
+import sys
+ba=sys.argv[1]
+s=open(ba+'/src/runtime.h').read()
+if 'runtime_ngs2_resolve' not in s:
+    s=s.replace('uintptr_t runtime_diva_misc_resolve(const char *name);',
+        'uintptr_t runtime_diva_misc_resolve(const char *name);\nuintptr_t runtime_ngs2_resolve(const char *name);')
+    open(ba+'/src/runtime.h','w').write(s)
+s=open(ba+'/src/runtime.c').read()
+if 'runtime_ngs2_resolve' not in s:
+    old='    uintptr_t misc = runtime_diva_misc_resolve(name);\n    if (misc) return misc;'
+    new='    uintptr_t ngs2 = runtime_ngs2_resolve(name);\n    if (ngs2) return ngs2;\n'+old
+    assert s.count(old)==1
+    open(ba+'/src/runtime.c','w').write(s.replace(old,new))
+print('ngs2 wired (minimal HLE)')
+PYEOF
 echo DIVA_HLE_PATCHES_OK
 
 # ---- bb-android: AOT 崩溃诊断增强（guest gregs + host regs + 内存探针）----
