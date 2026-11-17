@@ -78,7 +78,6 @@ __attribute__((constructor(101)))
 static void init(void){
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
-    setenv("BB_TRACE_SEMA", "1", 1);
     setenv("BB_COND_BREAKER", "1", 1);
     setenv("BB_WAIT_PROFILE", "1", 1);
     { struct sigaction sa; memset(&sa,0,sizeof sa); sa.sa_sigaction=bt_handler; sa.sa_flags=SA_SIGINFO;

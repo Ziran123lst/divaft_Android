@@ -195,7 +195,7 @@ static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     ++waits;
     const int profile = runtime_wait_profiling();
     const uint64_t start = profile ? runtime_wait_clock() : 0;
-    fprintf(stderr,"COND_WAIT ra=%p c=%p m=%p\n",__builtin_return_address(0),(void*)c,(void*)(*mutex));
+    if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_WAIT ra=%p c=%p m=%p\n",__builtin_return_address(0),(void*)c,(void*)(*mutex));
     const int e2 = pthread_cond_wait(&c->native, &(*mutex)->native);
     if (profile) runtime_wait_note(0, runtime_wait_clock() - start);
     return orbis_error(e2);
@@ -221,13 +221,13 @@ static ABI int32_t cond_signal(GuestCond **cond) {
     GuestCond *c;
     int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; ++cond_progress; fprintf(stderr,"COND_SIG ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_signal(&c->native));
+    ++wakeups; ++cond_progress; if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_SIG ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_signal(&c->native));
 }
 static ABI int32_t cond_broadcast(GuestCond **cond) {
     GuestCond *c;
     int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; ++cond_progress; fprintf(stderr,"COND_BCAST ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_broadcast(&c->native));
+    ++wakeups; ++cond_progress; if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_BCAST ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_broadcast(&c->native));
 }
 /* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;
