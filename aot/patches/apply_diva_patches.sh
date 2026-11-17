@@ -191,3 +191,9 @@ if 'runtime_ngs2_resolve' not in s:
 print('ngs2+misc wired')
 EOF
 echo DIVA_HLE_PATCHES_OK
+
+# ---- bb-android: AOT 崩溃诊断增强（guest gregs + host regs + 内存探针）----
+if ! grep -q 'AOT: gregs:' "$BA/cpu/guest_cpu_aot.cpp"; then
+  git -C "$BA" apply "$SD/aot-crash-diagnostics.patch" 2>/dev/null || patch -d "$BA" -p1 -s < "$SD/aot-crash-diagnostics.patch"
+  echo "crash diagnostics applied"
+fi
