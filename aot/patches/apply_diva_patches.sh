@@ -167,28 +167,25 @@ add='''  case OP_VPCMPISTRX: {
 assert s.count(anchor)==1; open(sys.argv[1],'w').write(s.replace(anchor,anchor+add)); print('pcmpistrx lowering inserted')
 EOF
 # ---- bb-android: DIVA HLE 模块（Ngs2/misc/kernel）+ 接线 ----
-cp "$SD/runtime_ngs2.c.diva" "$BA/src/runtime_ngs2.c"
 cp "$SD/runtime_diva_misc.c.diva" "$BA/src/runtime_diva_misc.c"
 cp "$SD/runtime_kernel.c.diva" "$BA/src/runtime_kernel.c"
 python3 - "$BA" <<'EOF'
 import sys
 ba=sys.argv[1]
 s=open(ba+'/src/runtime.h').read()
-if 'runtime_ngs2_resolve' not in s:
+if 'runtime_diva_misc_resolve' not in s:
     s=s.replace('uintptr_t runtime_audio_resolve(const char *name);',
-        'uintptr_t runtime_audio_resolve(const char *name);\nuintptr_t runtime_ngs2_resolve(const char *name);\nuintptr_t runtime_diva_misc_resolve(const char *name);')
+        'uintptr_t runtime_audio_resolve(const char *name);\nuintptr_t runtime_diva_misc_resolve(const char *name);')
     open(ba+'/src/runtime.h','w').write(s)
 s=open(ba+'/src/runtime.c').read()
-if 'runtime_ngs2_resolve' not in s:
+if 'runtime_diva_misc_resolve' not in s:
     old='''    uintptr_t audio = runtime_audio_resolve(name);
     if (audio) return audio;'''
     new=old+'''
-    uintptr_t ngs2 = runtime_ngs2_resolve(name);
-    if (ngs2) return ngs2;
     uintptr_t misc = runtime_diva_misc_resolve(name);
     if (misc) return misc;'''
     assert s.count(old)==1; open(ba+'/src/runtime.c','w').write(s.replace(old,new))
-print('ngs2+misc wired')
+print('misc wired (real Ngs2 via shadPS4)')
 EOF
 echo DIVA_HLE_PATCHES_OK
 

@@ -52,3 +52,13 @@ strlen(NULL)/printf(NULL) 崩溃。shader 归档已加载（路径修正后）�
 需用户补：rom_ps4_fix/ 与 rom_ps4_fix_tw/ 整个目录（含 rom/game_db.txt + rom/rob/*.farc
 + rom/shader_ps4.sbo），以及 ram/（MiscData/CalibData/CloseData/PrimaryData）。
 诊断工具链（寄存器/内存探针/栈回溯/HLE追踪/文件追踪/模块符号化/host backtrace）全入库。
+
+## 音频重大进展（2026-11-17 14:50）：真实 Ngs2 DSP 合成器集成
+移植 shadPS4 完整 Ngs2（3217 行，自包含无 audio_core 依赖，纯软件合成渲染进 guest 缓冲）
+进 gpu/shadps4/core/libraries/ngs2，经 bbgpu_register_kernel 注册（cpu-only 也生效），
+替换最小静音桩。aot/scripts/port_ngs2.sh 可复现。
+实证：Lib.Ngs2 sceNgs2VoiceControl 被调 27 万次（游戏主动控制语音）；
+AudioOut 输出端口已打开（port 0/1 2ch、port 17 1ch，s16 512帧@48kHz，runtime_audio.c SDL3/FIFO）。
+音频输出后端：qemu  headless BB_AUDIO=none 写 FIFO/BB_AUDIO_DUMP 可验 PCM；真机需 AAudio。
+注：shadPS4 的 sceNgs2VoiceControl 本身是 stub（返回 OK 未应用参数），完整语音参数需后续补。
+实际出声需游戏越过缺数据崩溃（game_db.txt/rob farc）进入渲染循环。
