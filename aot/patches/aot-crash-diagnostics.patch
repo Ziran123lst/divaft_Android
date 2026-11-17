@@ -1,8 +1,31 @@
 diff --git a/cpu/guest_cpu_aot.cpp b/cpu/guest_cpu_aot.cpp
-index 5d98660..25fa6cf 100644
+index 5d98660..975f5d6 100644
 --- a/cpu/guest_cpu_aot.cpp
 +++ b/cpu/guest_cpu_aot.cpp
-@@ -1069,6 +1069,74 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
+@@ -329,8 +329,22 @@ inline void HostCall(GuestState* s, void* fn, Thread* t) {
+     NoteGuestRsp(sp);
+     const uint64_t h0 = E.stats && !t->host_depth ? Ticks() : 0;
+     ++t->host_depth;
++    const uint64_t arg0 = s->gregs[RDI];
+     CallHostFn(s, fn);
+     --t->host_depth;
++    {
++        static const bool hle_trace = std::getenv("BB_HLE_TRACE") != nullptr;
++        if (hle_trace) {
++            Dl_info info {};
++            uintptr_t off = 0; const char* mod = "?";
++            if (dladdr(fn, &info)) { off = reinterpret_cast<uintptr_t>(fn) - reinterpret_cast<uintptr_t>(info.dli_fbase);
++                mod = info.dli_fname ? std::strrchr(info.dli_fname, '/') + 1 : "?";
++                if (info.dli_sname) { std::fprintf(stderr, "HLE t%d %s(arg0=%llx) -> rax=%llx\n", (int)syscall(SYS_gettid), info.dli_sname, (unsigned long long)arg0, (unsigned long long)s->gregs[RAX]); goto done; } }
++            std::fprintf(stderr, "HLE t%d %s+%llx(arg0=%llx) -> rax=%llx\n", (int)syscall(SYS_gettid), mod, (unsigned long long)off,
++                         (unsigned long long)arg0, (unsigned long long)s->gregs[RAX]);
++            done:;
++        }
++    }
+     if (h0) t->host_ticks += Ticks() - h0;
+     NoteGuestRsp(saved);
+     s->gregs[RSP] = sp + 8;
+@@ -1069,6 +1083,74 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
      std::fprintf(stderr, "AOT: fault at host pc %p (%s), guest rsp %#llx, rip %#llx, depth %u\n", reinterpret_cast<void*>(pc),
                   pc >= E.so_lo && pc < E.so_hi ? "in a unit" : InCode(pc) ? "in guest code" : "elsewhere",
                   (unsigned long long)t->s->gregs[RSP], (unsigned long long)t->s->rip, t->depth);
