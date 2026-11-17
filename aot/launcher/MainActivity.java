@@ -229,6 +229,8 @@ public class MainActivity extends Activity {
                 File audioFifo = new File(getFilesDir(), "audio.fifo");
                 append("音频: " + AudioBridge.start(audioFifo) + "\n");
                 pb.environment().put("BB_AUDIO_FIFO", audioFifo.getPath());
+                pb.environment().put("BB_TOUCH_FILE", new File(getFilesDir(), "touch.state").getPath());
+                pb.environment().put("BB_ANDROID_INPUT", "1");
                 pb.environment().put("BB_IMPORT_STUBS", "1");
                 pb.environment().put("BB_FILE_TRACE", "1");
                 pb.environment().put("BB_HLE_TRACE", "1");
