@@ -66,6 +66,16 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <stdarg.h>
+
+static FILE* D = NULL;
+static void dlog(const char* fmt, ...) {
+    if (!D) return;
+    va_list ap; va_start(ap, fmt);
+    vfprintf(D, fmt, ap);
+    va_end(ap);
+    fputc('\n', D); fflush(D);
+}
 
 #include "bb_present_proto.h"
 
@@ -94,9 +104,9 @@ static struct {
 
 static void load_api(void) {
     void* lib = dlopen("libandroid.so", RTLD_NOW);
-    if (!lib) return;
+    if (!lib) { dlog("load_api: dlopen libandroid.so failed: %s", dlerror()); return; }
     *(void**)&api.set_on_commit = dlsym(lib, "ASurfaceTransaction_setOnCommit"); /* optional */
-#define SYM(field, name) if (!(*(void**)&api.field = dlsym(lib, name))) return
+#define SYM(field, name) if (!(*(void**)&api.field = dlsym(lib, name))) { dlog("load_api: missing %s", name); return; }
     SYM(create_from_window, "ASurfaceControl_createFromWindow");
     SYM(release, "ASurfaceControl_release");
     SYM(txn_create, "ASurfaceTransaction_create");
@@ -204,10 +214,10 @@ static void drop_surface_control(void) {
 }
 
 static void make_surface_control(void) {
-    if (!api.ok || !S.window || S.sc) return;
+    if (!api.ok || !S.window || S.sc) { dlog("make_sc skip: api.ok=%d window=%p sc=%p", api.ok, (void*)S.window, (void*)S.sc); return; }
     S.sc = api.create_from_window(S.window, "bbpresent");
-    if (!S.sc) LOGE("ASurfaceControl_createFromWindow failed");
-    else LOGI("surface control created");
+    if (!S.sc) { LOGE("ASurfaceControl_createFromWindow failed"); dlog("make_sc: createFromWindow FAILED"); }
+    else { LOGI("surface control created"); dlog("make_sc: created sc=%p window=%p", (void*)S.sc, (void*)S.window); }
 }
 
 typedef struct {
@@ -230,6 +240,8 @@ static void wake_receiver(void) {
 
 static void on_complete(void* ctx_, ASurfaceTransactionStats* stats) {
     DoneCtx* ctx = ctx_;
+    static unsigned long long done_n;
+    if (++done_n <= 5 || done_n % 60 == 0) dlog("on_complete #%llu (release idx=%u)", done_n, ctx->index);
     int fence = -1;
     ASurfaceControl** controls = NULL;
     size_t n = 0;
@@ -375,12 +387,12 @@ static void present_frame(const bb_present_msg* m, int acquire_fd) {
     }
     atomic_fetch_add(&S.frames, 1);
     if (!S.sc || !api.ok || S.hold) {
-        /* No display now (surface lost, app paused, held): the frame is dropped; its own acquire fence
-         * is the release (the game's writes are what the buffer still waits for). */
+        dlog("frame %llu DROP: sc=%p api.ok=%d hold=%d", (unsigned long long)m->frame, (void*)S.sc, api.ok, S.hold);
         send_release(m->generation, m->index, m->frame, acquire_fd);
         return;
     }
     if (!S.fifo) {
+        if (m->frame <= 5 || m->frame % 60 == 0) dlog("frame %llu SHOW idx=%u", (unsigned long long)m->frame, m->index);
         show_frame(m->generation, m->index, m->frame, m->width, m->height, acquire_fd);
         return;
     }
@@ -545,13 +557,20 @@ static void* server_thread(void* unused) {
 /* ---- JNI ---- */
 
 JNIEXPORT jstring JNICALL Java_com_divaft_launcher_BbPresent_nativeStart(JNIEnv* env, jclass cls,
-        jstring jpath) {
+        jstring jpath, jstring jdiag) {
     (void)cls;
     const char* path = (*env)->GetStringUTFChars(env, jpath, NULL);
+    if (jdiag) {
+        const char* dp = (*env)->GetStringUTFChars(env, jdiag, NULL);
+        if (!D) D = fopen(dp, "w");
+        dlog("nativeStart socket=%s", path);
+        (*env)->ReleaseStringUTFChars(env, jdiag, dp);
+    }
     char msg[160];
     pthread_mutex_lock(&S.lock);
     if (!S.started) {
         load_api();
+        dlog("load_api ok=%d set_on_commit=%p", api.ok, (void*)api.set_on_commit);
         if (S.wake_fd < 0) /* kept for the life of the process: the receive thread may still poll it */
             S.wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
         if (S.wake_fd < 0) {
@@ -597,7 +616,10 @@ JNIEXPORT void JNICALL Java_com_divaft_launcher_BbPresent_nativeSetSurface(JNIEn
     if (S.window) { ANativeWindow_release(S.window); S.window = NULL; }
     if (surface) {
         S.window = ANativeWindow_fromSurface(env, surface);
+        dlog("setSurface: window=%p", (void*)S.window);
         make_surface_control();
+    } else {
+        dlog("setSurface: null surface");
     }
     pthread_mutex_unlock(&S.lock);
 }

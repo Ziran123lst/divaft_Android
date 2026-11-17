@@ -14,6 +14,9 @@
         android:extractNativeLibs="true"
         android:requestLegacyExternalStorage="true"
         android:allowBackup="false">
+        <activity android:name=".DisplayActivity" android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

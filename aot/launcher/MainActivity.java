@@ -201,7 +201,10 @@ public class MainActivity extends Activity {
                 File crashLog = new File(dataDir, "diva-crash.log");
                 File logFile = new File(dataDir, "diva-boot.log");
                 String sockPath = new File(getFilesDir(), "bbpresent.sock").getPath();
-                String pr = BbPresent.start(surfaceView.getHolder(), sockPath);
+                File presOv = overrideOr("libbbpresent.so", getApplicationInfo().nativeLibraryDir);
+                BbPresent.init(presOv.getPath());
+                String diagPath = new File(dataDir, "bbpresent-diag.log").getPath();
+                String pr = BbPresent.listen(sockPath, diagPath);
                 append("呈现: " + pr + "\n");
                 append("exe=" + exe.getPath() + "\napp0=" + gamePath
                     + "\n数据目录=" + dataDir.getPath() + "\n启动 bb-probe ...\n");
@@ -229,6 +232,7 @@ public class MainActivity extends Activity {
                 pb.redirectErrorStream(true);
                 pb.directory(dataDir);
                 proc = pb.start();
+                runOnUiThread(() -> startActivity(new Intent(MainActivity.this, DisplayActivity.class)));
                 handler.post(new Runnable() {
                     @Override public void run() {
                         status.setText("画面帧数: " + BbPresent.frames()

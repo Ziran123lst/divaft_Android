@@ -2,35 +2,40 @@ package com.divaft.launcher;
 
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import java.io.File;
 
-/**
- * The Bionic game process's frame path (tools/android/present/bb_present_proto.h): libbbpresent.so
- * listens on a unix socket, receives AHardwareBuffers from the game and shows them on the
- * SurfaceView with an ASurfaceControl. The game stays connected while the surface comes and goes:
- * with no surface its frames are dropped, with a new one they show again.
- */
 public final class BbPresent {
-    static { System.loadLibrary("bbpresent"); }
-    private static native String nativeStart(String socketPath);
+    private static boolean loaded;
+    private static native String nativeStart(String socketPath, String diagPath);
     private static native void nativeSetSurface(Surface surface);
     private static native long nativeFrames();
     private static native void nativeSetHold(boolean hold);
     private static native void nativeShutdown();
 
+    /** Load libbbpresent from an override copy if present, else the bundled one. */
+    public static synchronized void init(String overridePath) {
+        if (loaded) return;
+        if (overridePath != null && new File(overridePath).exists()) {
+            System.load(overridePath);
+        } else {
+            System.loadLibrary("bbpresent");
+        }
+        loaded = true;
+    }
+
     private static SurfaceHolder.Callback callback;
     private static SurfaceHolder attached;
 
-    /** Listens on socketPath (once) and shows the game on this surface until it is destroyed. */
-    public static synchronized String start(SurfaceHolder holder, String socketPath) {
-        String result = nativeStart(socketPath);
+    public static synchronized String start(SurfaceHolder holder, String socketPath, String diagPath) {
+        init(null);
+        String result = nativeStart(socketPath, diagPath);
         used = true;
         if (!result.equals("present running")) return result;
         if (attached != null && callback != null) attached.removeCallback(callback);
         attached = holder;
         callback = new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(SurfaceHolder h) { setSurface(h.getSurface()); }
-            @Override public void surfaceChanged(SurfaceHolder h, int format, int w, int height) {}
-            // The game keeps running: its frames are dropped until a surface is back.
+            @Override public void surfaceChanged(SurfaceHolder h, int format, int w, int height) { setSurface(h.getSurface()); }
             @Override public void surfaceDestroyed(SurfaceHolder h) { setSurface(null); }
         };
         holder.addCallback(callback);
@@ -39,18 +44,18 @@ public final class BbPresent {
     }
 
     private static synchronized void setSurface(Surface surface) { nativeSetSurface(surface); }
-
-    /** An online game keeps running while the app is in the background or the screen is off: with hold on, its frames
-     *  are released unseen (a few per refresh at most) so it never waits for a display that is not there. */
+    /** Listen only (no surface yet); the DisplayActivity attaches the surface later. */
+    public static synchronized String listen(String socketPath, String diagPath) {
+        init(null);
+        String r = nativeStart(socketPath, diagPath);
+        used = true;
+        return r;
+    }
+    /** Called by DisplayActivity when its full-screen surface is ready/lost. */
+    public static synchronized void surface(Surface s) { if (used) nativeSetSurface(s); }
     public static synchronized void setHold(boolean hold) { if (used) nativeSetHold(hold); }
-
-    /** Frames the game has presented to the app so far. */
     public static long frames() { return nativeFrames(); }
-
     private static boolean used;
-    /** frames() for the status poll: 0 until the Bionic path was started. */
     public static long framesIfLoaded() { return used ? nativeFrames() : 0; }
-
-    /** Ends the listener and the display (the app is closing). */
     public static synchronized void stop() { nativeShutdown(); }
 }
