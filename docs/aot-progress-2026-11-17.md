@@ -32,3 +32,13 @@ rndpass_pre_proc 单例初始化读其 getter 时 [obj] 仍空 → 崩溃。
 → 游戏数据 dump 缺 rom/ 与 ram/ 目录。已补 rom/shader_ps4.sbo（来自 device-pack）仍崩，
 说明 shader 归档加载初始化步骤未被触发（上游 HLE 或数据依赖）。
 待办：用户补完整 dump（rom/shader_ps4.sbo + ram/PrimaryData 等）；追踪归档加载触发点。
+
+## 重大突破（2026-11-17 13:30）：shader 归档路径修正，boot 推进到渲染线程
+前崩溃根因实为**路径放错**：游戏找的是 rom_ps4_fix/rom/shader_ps4.sbo 与
+rom_ps4_fix_tw/rom/shader_ps4.sbo（社区修复补丁目录，BB_FILE_TRACE 实证），不是 rom/。
+把 shader_ps4.sbo 放到 rom_ps4_fix{,_tw}/rom/ 后：shader 归档被反复读取、5 个 renderer_worker
+线程 + TrophyControlThread 创建、boot 从 216 行推进到 379 行，越过 rndpass_pre_proc 崩溃。
+新崩点：host glibc libc.so.6+0x8f228（sem_trywait 附近，信号量操作），调用者 libc+0x828b8，
+渲染线程经 libc Fios IO 调入。疑同步原语 HLE 把 guest 指针当 host sem_t*。
+诊断增强：崩溃报告 dladdr 符号化 fault/caller 模块+偏移；栈/帧探针缩范围防守护页嵌套 fault。
+仍缺数据：rom_ps4_fix{,_tw}/rom/game_db.txt + rob/*.farc（游戏数据库清单/动作库），ram/ 目录。

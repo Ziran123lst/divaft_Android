@@ -1,5 +1,5 @@
 diff --git a/cpu/guest_cpu_aot.cpp b/cpu/guest_cpu_aot.cpp
-index 5d98660..975f5d6 100644
+index 5d98660..7df71bb 100644
 --- a/cpu/guest_cpu_aot.cpp
 +++ b/cpu/guest_cpu_aot.cpp
 @@ -329,8 +329,22 @@ inline void HostCall(GuestState* s, void* fn, Thread* t) {
@@ -25,7 +25,7 @@ index 5d98660..975f5d6 100644
      if (h0) t->host_ticks += Ticks() - h0;
      NoteGuestRsp(saved);
      s->gregs[RSP] = sp + 8;
-@@ -1069,6 +1083,74 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
+@@ -1069,10 +1083,91 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
      std::fprintf(stderr, "AOT: fault at host pc %p (%s), guest rsp %#llx, rip %#llx, depth %u\n", reinterpret_cast<void*>(pc),
                   pc >= E.so_lo && pc < E.so_hi ? "in a unit" : InCode(pc) ? "in guest code" : "elsewhere",
                   (unsigned long long)t->s->gregs[RSP], (unsigned long long)t->s->rip, t->depth);
@@ -61,7 +61,7 @@ index 5d98660..975f5d6 100644
 +            if (sp >= 0x10000 && sp < 0x8000000000ull) {
 +                const uint64_t* st = reinterpret_cast<const uint64_t*>(sp);
 +                std::fprintf(stderr, "AOT: guest stack @%llx:", (unsigned long long)sp);
-+                for (int i = 0; i < 64; ++i) {
++                for (int i = 0; i < 8; ++i) {
 +                    uint64_t v = st[i];
 +                    if (v >= E.base && v < E.base + 0xc95852cull)
 +                        std::fprintf(stderr, " [%d]=+%llx", i, (unsigned long long)(v - E.base));
@@ -71,14 +71,14 @@ index 5d98660..975f5d6 100644
 +                if (bp >= 0x10000 && bp < 0x8000000000ull) {
 +                    const uint64_t* fb = reinterpret_cast<const uint64_t*>(bp);
 +                    std::fprintf(stderr, "AOT: frame @rbp %llx:", (unsigned long long)bp);
-+                    for (int i = -2; i < 10; ++i) {
++                    for (int i = -2; i < 6; ++i) {
 +                        uint64_t v = fb[i];
 +                        std::fprintf(stderr, " [%d]=%llx%s", i, (unsigned long long)v,
 +                                     (v >= E.base && v < E.base + 0xc95852cull) ? "(code)" : "");
 +                    }
 +                    std::fprintf(stderr, "\n");
 +                    // 沿 rbp 链回溯
-+                    for (int depth = 0; depth < 8 && bp >= 0x10000 && bp < 0x8000000000ull; ++depth) {
++                    for (int depth = 0; depth < 4 && bp >= 0x10000 && bp < 0x8000000000ull; ++depth) {
 +                        const uint64_t* f = reinterpret_cast<const uint64_t*>(bp);
 +                        uint64_t ret = f[1], next = f[0];
 +                        std::fprintf(stderr, "AOT: bt%d rbp=%llx ret=%llx(+%llx)\n", depth,
@@ -100,3 +100,20 @@ index 5d98660..975f5d6 100644
      if (pc >= E.so_lo && pc < E.so_hi) {
          auto at = std::upper_bound(E.by_address.begin(), E.by_address.end(), pc, [](uintptr_t v, const Engine::Where& w) { return v < w.fn; });
          if (at != E.by_address.begin()) std::fprintf(stderr, "AOT: unit +%#x, offset %#llx in it\n", (at - 1)->vaddr, (unsigned long long)(pc - (at - 1)->fn));
+     }
++    {
++        Dl_info fi {};
++        if (dladdr(reinterpret_cast<void*>(pc), &fi) && fi.dli_fname)
++            std::fprintf(stderr, "AOT: fault module %s+%llx (%s)\n", std::strrchr(fi.dli_fname,'/')+1,
++                         (unsigned long long)(pc - reinterpret_cast<uintptr_t>(fi.dli_fbase)), fi.dli_sname ? fi.dli_sname : "?");
++#if defined(__aarch64__) && defined(__linux__)
++        uintptr_t lr = static_cast<const ucontext_t*>(ucontext)->uc_mcontext.regs[30];
++        Dl_info fl {};
++        if (dladdr(reinterpret_cast<void*>(lr), &fl) && fl.dli_fname)
++            std::fprintf(stderr, "AOT: caller module %s+%llx (%s)\n", std::strrchr(fl.dli_fname,'/')+1,
++                         (unsigned long long)(lr - reinterpret_cast<uintptr_t>(fl.dli_fbase)), fl.dli_sname ? fl.dli_sname : "?");
++#endif
++    }
+     if (E.trace) {
+         const unsigned n = t->trace_n, first = n > Thread::TraceSize ? n - Thread::TraceSize : 0;
+         std::fprintf(stderr, "AOT: tid %d, last %u transitions:\n", int(syscall(SYS_gettid)), n - first);
