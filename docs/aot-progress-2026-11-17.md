@@ -62,3 +62,15 @@ AudioOut 输出端口已打开（port 0/1 2ch、port 17 1ch，s16 512帧@48kHz�
 音频输出后端：qemu  headless BB_AUDIO=none 写 FIFO/BB_AUDIO_DUMP 可验 PCM；真机需 AAudio。
 注：shadPS4 的 sceNgs2VoiceControl 本身是 stub（返回 OK 未应用参数），完整语音参数需后续补。
 实际出声需游戏越过缺数据崩溃（game_db.txt/rob farc）进入渲染循环。
+
+## 音频诚实纠正（2026-11-17 15:00）
+前条"真实 Ngs2 DSP 合成"表述**高估了**，纠正：shadPS4 的 Ngs2 本身是**管理骨架**——
+SystemRender 仅校验缓冲后 memset 0（静音），sampler/pan/eq/reverb/mastering/submixer 全是
+10 行空占位，**无任何真实 DSP**。移植它得到的是更完善的句柄/rack/voice 生命周期管理+校验，
+仍渲染静音。
+DIVA 真实音频引擎是 **FMOD**（静态链入 eboot，无 libSceFmod 导入，原生 AOT 执行），
+runtime_audio.c 注释证实"FMOD 输出线程"调 sceAudioOutOutput。故主音频通路是
+FMOD(原生)→sceAudioOutOutput→runtime_audio.c(SDL3/FIFO/AAudio)，Ngs2 或仅系统音后端。
+AudioOut 输出端口已打开（port 0/1/17）。真实出声需游戏越过缺数据崩溃进入 FMOD 输出循环。
+音频进度修正：输出基础设施在位（AudioOut+FMOD原生），Ngs2 骨架（FMOD 主输出或绕过它），
+真实声音验证仍卡游戏数据。阶段4 约 50%（非 60%）。
