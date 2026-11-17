@@ -222,6 +222,7 @@ public class MainActivity extends Activity {
                 pb.environment().put("XDG_CACHE_HOME", home);
                 pb.environment().put("TMPDIR", home);
                 pb.environment().put("BB_AOT", aot.getPath());
+                pb.environment().put("BB_PRESENT_SOCKET", sockPath);
                 pb.environment().put("BB_IMPORT_STUBS", "1");
                 pb.environment().put("BB_FILE_TRACE", "1");
                 pb.environment().put("BB_HLE_TRACE", "1");
