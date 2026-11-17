@@ -135,7 +135,7 @@ static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
 /* Condition variables: opaque handles over host pthread_cond (CLOCK_REALTIME,
  * like FreeBSD's default), sharing the host mutex behind GuestMutex. */
 typedef struct GuestCond { pthread_cond_t native; struct GuestCond* next; } GuestCond;
-static GuestCond* cond_registry; static int breaker_started;
+static GuestCond* cond_registry; static int breaker_started; static volatile unsigned long long cond_progress;
 static void* cond_breaker(void*);
 static size_t conds, waits, wakeups;
 static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
@@ -151,7 +151,7 @@ static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
 /* Handles 0/1 are static initializers, 2 marks a destroyed cond (EINVAL, as on
  * FreeBSD). Each call reads the handle once: a guest thread may destroy the cond
  * while another still signals it (seen when a movie's player threads shut down). */
-static void* cond_breaker(void* a){ (void)a; for(;;){ sleep(2); pthread_mutex_lock(&static_init); for(GuestCond* c=cond_registry;c;c=c->next) pthread_cond_broadcast(&c->native); pthread_mutex_unlock(&static_init); } return NULL; }
+static void* cond_breaker(void* a){ (void)a; unsigned long long last=0; int stall=0; for(;;){ sleep(1); unsigned long long cur=cond_progress; if(cur==last){ if(++stall>=3){ pthread_mutex_lock(&static_init); for(GuestCond* c=cond_registry;c;c=c->next) pthread_cond_broadcast(&c->native); pthread_mutex_unlock(&static_init); stall=0; } } else { last=cur; stall=0; } } return NULL; }
 #define COND_DESTROYED ((GuestCond *)(uintptr_t)2)
 static int32_t ensure_cond(GuestCond **cond, GuestCond **out) {
     if (!cond) return orbis_error(EINVAL);
@@ -221,13 +221,13 @@ static ABI int32_t cond_signal(GuestCond **cond) {
     GuestCond *c;
     int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; fprintf(stderr,"COND_SIG ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_signal(&c->native));
+    ++wakeups; ++cond_progress; fprintf(stderr,"COND_SIG ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_signal(&c->native));
 }
 static ABI int32_t cond_broadcast(GuestCond **cond) {
     GuestCond *c;
     int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; fprintf(stderr,"COND_BCAST ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_broadcast(&c->native));
+    ++wakeups; ++cond_progress; fprintf(stderr,"COND_BCAST ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_broadcast(&c->native));
 }
 /* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;
