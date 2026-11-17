@@ -24,3 +24,11 @@ eboot unit+0x555370（std::string 析构/SSO 清理路径）空指针解引用 a
 原 FEX-JIT 路线（runtime/）推进至 locale/iostream ABI 墙后转 AOT；
 其成果（加载器/HLE 契约 643 条/shader 全集提取与转换/插值回退）仍被 AOT 路线复用
 （contract.tsv 用于 NID 字典生成）。
+
+## 崩溃根因更新（2026-11-17 12:00）
+崩溃对象 = "rom/shader_ps4.sbo" 归档访问器（懒加载，构造器故意置空 [obj]）。
+rndpass_pre_proc 单例初始化读其 getter 时 [obj] 仍空 → 崩溃。
+运行中游戏未尝试 open rom/shader_ps4.sbo，且 ram/MiscData/CalibData/PrimaryData 全 not found
+→ 游戏数据 dump 缺 rom/ 与 ram/ 目录。已补 rom/shader_ps4.sbo（来自 device-pack）仍崩，
+说明 shader 归档加载初始化步骤未被触发（上游 HLE 或数据依赖）。
+待办：用户补完整 dump（rom/shader_ps4.sbo + ram/PrimaryData 等）；追踪归档加载触发点。
