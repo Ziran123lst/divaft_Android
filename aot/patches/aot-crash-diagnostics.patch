@@ -1,8 +1,16 @@
 diff --git a/cpu/guest_cpu_aot.cpp b/cpu/guest_cpu_aot.cpp
-index 5d98660..7df71bb 100644
+index 5d98660..1e2ab3a 100644
 --- a/cpu/guest_cpu_aot.cpp
 +++ b/cpu/guest_cpu_aot.cpp
-@@ -329,8 +329,22 @@ inline void HostCall(GuestState* s, void* fn, Thread* t) {
+@@ -12,6 +12,7 @@
+ #ifndef _GNU_SOURCE
+ #define _GNU_SOURCE
+ #endif
++#include <execinfo.h>
+ #include "guest_state.h"
+ #include "guest_cpu_atomics.h"
+ #include "guest_cpu_native.h"
+@@ -329,8 +330,22 @@ inline void HostCall(GuestState* s, void* fn, Thread* t) {
      NoteGuestRsp(sp);
      const uint64_t h0 = E.stats && !t->host_depth ? Ticks() : 0;
      ++t->host_depth;
@@ -25,7 +33,7 @@ index 5d98660..7df71bb 100644
      if (h0) t->host_ticks += Ticks() - h0;
      NoteGuestRsp(saved);
      s->gregs[RSP] = sp + 8;
-@@ -1069,10 +1083,91 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
+@@ -1069,10 +1084,103 @@ __attribute__((visibility("default"))) void bbaot_crash_report(const void* ucont
      std::fprintf(stderr, "AOT: fault at host pc %p (%s), guest rsp %#llx, rip %#llx, depth %u\n", reinterpret_cast<void*>(pc),
                   pc >= E.so_lo && pc < E.so_hi ? "in a unit" : InCode(pc) ? "in guest code" : "elsewhere",
                   (unsigned long long)t->s->gregs[RSP], (unsigned long long)t->s->rip, t->depth);
@@ -101,6 +109,18 @@ index 5d98660..7df71bb 100644
          auto at = std::upper_bound(E.by_address.begin(), E.by_address.end(), pc, [](uintptr_t v, const Engine::Where& w) { return v < w.fn; });
          if (at != E.by_address.begin()) std::fprintf(stderr, "AOT: unit +%#x, offset %#llx in it\n", (at - 1)->vaddr, (unsigned long long)(pc - (at - 1)->fn));
      }
++    {
++        void* bt[24]; int n = backtrace(bt, 24);
++        std::fprintf(stderr, "AOT: host backtrace:");
++        for (int i = 0; i < n; ++i) {
++            Dl_info bi {};
++            if (dladdr(bt[i], &bi) && bi.dli_fname)
++                std::fprintf(stderr, " %s+%llx", std::strrchr(bi.dli_fname,'/')+1,
++                             (unsigned long long)(reinterpret_cast<uintptr_t>(bt[i]) - reinterpret_cast<uintptr_t>(bi.dli_fbase)));
++            else std::fprintf(stderr, " %p", bt[i]);
++        }
++        std::fprintf(stderr, "\n");
++    }
 +    {
 +        Dl_info fi {};
 +        if (dladdr(reinterpret_cast<void*>(pc), &fi) && fi.dli_fname)

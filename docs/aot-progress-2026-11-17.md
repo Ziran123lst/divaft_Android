@@ -42,3 +42,13 @@ rom_ps4_fix_tw/rom/shader_ps4.sbo（社区修复补丁目录，BB_FILE_TRACE 实
 渲染线程经 libc Fios IO 调入。疑同步原语 HLE 把 guest 指针当 host sem_t*。
 诊断增强：崩溃报告 dladdr 符号化 fault/caller 模块+偏移；栈/帧探针缩范围防守护页嵌套 fault。
 仍缺数据：rom_ps4_fix{,_tw}/rom/game_db.txt + rob/*.farc（游戏数据库清单/动作库），ram/ 目录。
+
+## 崩溃链彻底查清（2026-11-17 14:00）：根因=游戏数据不完整
+新崩点实锤为 glibc **strlen**（libc+0xa4508：ld1{v0.16b},[x1] + cmeq #0，NEON 找 null 字节）
+与 **vfprintf**（libc+0x561f0）对 NULL 字符串指针解引用。渲染线程经 Fios IO 调入。
+机制：game_db.txt（游戏数据库）+ rob/*.farc（动作库）缺失 → 资源名/路径查询返回 NULL →
+strlen(NULL)/printf(NULL) 崩溃。shader 归档已加载（路径修正后），但下游数据库缺失。
+**结论：代码侧已推到数据依赖边界，剩余阻塞=完整游戏数据。**
+需用户补：rom_ps4_fix/ 与 rom_ps4_fix_tw/ 整个目录（含 rom/game_db.txt + rom/rob/*.farc
++ rom/shader_ps4.sbo），以及 ram/（MiscData/CalibData/CloseData/PrimaryData）。
+诊断工具链（寄存器/内存探针/栈回溯/HLE追踪/文件追踪/模块符号化/host backtrace）全入库。
