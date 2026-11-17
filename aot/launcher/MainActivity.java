@@ -226,6 +226,9 @@ public class MainActivity extends Activity {
                 pb.environment().put("TMPDIR", home);
                 pb.environment().put("BB_AOT", aot.getPath());
                 pb.environment().put("BB_PRESENT_SOCKET", sockPath);
+                File audioFifo = new File(getFilesDir(), "audio.fifo");
+                append("音频: " + AudioBridge.start(audioFifo) + "\n");
+                pb.environment().put("BB_AUDIO_FIFO", audioFifo.getPath());
                 pb.environment().put("BB_IMPORT_STUBS", "1");
                 pb.environment().put("BB_FILE_TRACE", "1");
                 pb.environment().put("BB_HLE_TRACE", "1");
