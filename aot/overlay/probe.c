@@ -779,7 +779,8 @@ void runtime_restart(void) {
 }
 
 int main(int argc, char **argv) {
-    setenv("BB_COND_BREAKER", "0", 1); /* force off: breaker corrupts ctx; cond engine fix pending */
+    setenv("BB_COND_BREAKER", "1", 1); /* unstick main-thread cond deadlock; garbage ctx now bypassed */
+    unsetenv("BB_COND_TRACE"); /* gate is getenv-presence; unset to disable flood */
 
 
     setvbuf(stdout, NULL, _IONBF, 0);
