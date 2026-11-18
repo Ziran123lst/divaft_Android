@@ -251,7 +251,7 @@ static void *host_start(void *p) {
     attach(t);
     set_host_name(t->name);
     /* renderer_worker must not run before the main thread finishes render-context init (race -> NULL ctx panic). */
-    if (t->name && strcmp(t->name,"renderer_worker")==0) usleep(300000);
+    if (t->name && strcmp(t->name,"renderer_worker")==0) usleep(5000000);
     if (t->guest_stack) guest_cpu_thread_stack(t->guest_stack+t->guest_stack_size,t->guest_stack_size);
     const uint64_t argument=(uint64_t)(uintptr_t)t->argument;
     if (!setjmp(t->exit_jump)) {

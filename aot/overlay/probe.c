@@ -777,7 +777,8 @@ void runtime_restart(void) {
 }
 
 int main(int argc, char **argv) {
-    setenv("BB_COND_BREAKER", "0", 1); /* force off: premature wake corrupts render ctx */
+    setenv("BB_COND_BREAKER", "0", 1); /* force off: breaker corrupts ctx; cond engine fix pending */
+
 
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifndef _WIN32
