@@ -146,8 +146,14 @@ static void protect(void *p, size_t size, unsigned flags) {
     runtime_low_protect((uintptr_t)p, size, mode);
 #endif
 }
-static ABI __attribute__((noreturn)) void unresolved(uint32_t id, uintptr_t argument) {
+static ABI uint64_t unresolved(uint32_t id, uintptr_t argument) {
     if (id >= import_count) fail("bad import trap index");
+    if (getenv("BB_IMPORT_STUBS")) {
+        static unsigned char seen[8192];
+        if (id < 8192 && !seen[id]) { seen[id] = 1;
+            fprintf(stderr, "STUB import: %s (%s) arg0=0x%llx\n", names[id], runtime_import_name(names[id]), (unsigned long long)argument); }
+        return 0;
+    }
     uintptr_t caller=guest_cpu_return_address((uintptr_t)__builtin_return_address(0))-(uintptr_t)image;
     printf("STOP: first unsupported PS4 import: %s (index %u)\n", names[id], id);
     printf("API: %s\n", runtime_import_name(names[id]));
@@ -427,16 +433,38 @@ static uintptr_t nullparam_fake(void) {
     __atomic_store_n(&B, b, __ATOMIC_RELEASE);
     return b;
 }
+static uintptr_t nullparam_scratch(void) {
+    static uintptr_t S;
+    if (S) return S;
+    void* m = mmap(NULL, 16u<<20, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    if (m == MAP_FAILED) return 0;
+    __atomic_store_n(&S, (uintptr_t)m, __ATOMIC_RELEASE);
+    return S;
+}
 static int nullparam_skip(int sig, siginfo_t* info, void* context) {
-    if (sig != SIGSEGV || (uintptr_t)info->si_addr != 0xf0) return 0;
+    if (sig != SIGSEGV) return 0;
     ucontext_t* uc = (ucontext_t*)context;
     uintptr_t pc = uc->uc_mcontext.pc;
     uint32_t insn = *(uint32_t*)pc;
-    if ((insn & 0xFFC00000u) != 0xF9400000u) return 0;      /* LDR Xt,[Xn,#imm] */
-    if (((insn>>10)&0xFFF)*8 != 0xf0) return 0;             /* offset 0xf0 */
-    uintptr_t B = nullparam_fake(); if (!B) return 0;
+    uint32_t top = insn & 0xFFC00000u;
+    int is_ldr=0, is_str=0, scale=1;
+    switch (top) {
+      case 0xF9400000u: is_ldr=1; scale=8; break;
+      case 0xB9400000u: is_ldr=1; scale=4; break;
+      case 0x39400000u: is_ldr=1; scale=1; break;
+      case 0xF9000000u: is_str=1; scale=8; break;
+      case 0xB9000000u: is_str=1; scale=4; break;
+      case 0xBD000000u: is_str=1; scale=4; break;
+      case 0x39000000u: is_str=1; scale=1; break;
+      default: return 0;
+    }
     unsigned rn = (insn>>5)&31;
-    uc->uc_mcontext.regs[rn] = B;
+    if (uc->uc_mcontext.regs[rn] != 0) return 0;   /* only NULL-base faults */
+    uintptr_t off = ((insn>>10)&0xFFF)*scale;
+    if ((uintptr_t)info->si_addr != off) return 0;
+    if (is_ldr && off==0xf0) { uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; } }
+    uintptr_t S = nullparam_scratch(); if (!S) return 0;
+    uc->uc_mcontext.regs[rn] = S;
     return 1;
 }
 static void fault(int sig, siginfo_t *info, void *context) {
