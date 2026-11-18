@@ -792,6 +792,8 @@ void runtime_restart(void) {
 }
 
 int main(int argc, char **argv) {
+    setenv("BB_COND_BREAKER", "0", 1); /* force off: premature wake corrupts render ctx */
+
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifndef _WIN32
     /* Keep host heap objects handed to the guest (thread handles, TLS) in the
