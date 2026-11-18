@@ -446,25 +446,20 @@ static int nullparam_skip(int sig, siginfo_t* info, void* context) {
     ucontext_t* uc = (ucontext_t*)context;
     uintptr_t pc = uc->uc_mcontext.pc;
     uint32_t insn = *(uint32_t*)pc;
-    uint32_t top = insn & 0xFFC00000u;
-    int is_ldr=0, is_str=0, scale=1;
-    switch (top) {
-      case 0xF9400000u: is_ldr=1; scale=8; break;
-      case 0xB9400000u: is_ldr=1; scale=4; break;
-      case 0x39400000u: is_ldr=1; scale=1; break;
-      case 0xF9000000u: is_str=1; scale=8; break;
-      case 0xB9000000u: is_str=1; scale=4; break;
-      case 0xBD000000u: is_str=1; scale=4; break;
-      case 0x39000000u: is_str=1; scale=1; break;
-      default: return 0;
-    }
+    /* Any LDR/STR (immediate unsigned / pre / post / register-offset), incl SIMD&FP. */
+    int cls = ((insn & 0x3B000000u)==0x39000000u)          /* unsigned imm */
+           || ((insn & 0x3B200C00u)==0x38200800u)          /* register offset */
+           || ((insn & 0x3B200C00u)==0x38000400u)          /* post-index */
+           || ((insn & 0x3B200C00u)==0x38000C00u);         /* pre-index */
+    if (!cls) return 0;
     unsigned rn = (insn>>5)&31;
-    if (uc->uc_mcontext.regs[rn] != 0) return 0;   /* only NULL-base faults */
-    uintptr_t off = ((insn>>10)&0xFFF)*scale;
-    if ((uintptr_t)info->si_addr != off) return 0;
-    if (is_ldr && off==0xf0) { uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; } }
-    uintptr_t S = nullparam_scratch(); if (!S) return 0;
-    uc->uc_mcontext.regs[rn] = S;
+    if (uc->uc_mcontext.regs[rn] >= 0x100000u) return 0;   /* only NULL/low unmapped base */
+    /* crafted chain for the 0xf0 param-pool load */
+    if ((insn & 0xFFC00000u)==0xF9400000u && (((insn>>10)&0xFFF)*8)==0xf0) {
+        uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; }
+    }
+    uintptr_t S=nullparam_scratch(); if (!S) return 0;
+    uc->uc_mcontext.regs[rn]=S;
     return 1;
 }
 static void fault(int sig, siginfo_t *info, void *context) {
