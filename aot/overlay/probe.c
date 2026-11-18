@@ -443,38 +443,23 @@ static uintptr_t nullparam_scratch(void) {
 }
 static int nullparam_skip(int sig, siginfo_t* info, void* context) {
     if (sig != SIGSEGV) return 0;
+    if ((uintptr_t)info->si_addr >= 0x100000u) return 0;   /* only low/NULL data aborts */
     ucontext_t* uc = (ucontext_t*)context;
     uintptr_t pc = uc->uc_mcontext.pc;
     uint32_t insn = *(uint32_t*)pc;
-    /* Any LDR/STR (immediate unsigned / pre / post / register-offset), incl SIMD&FP. */
-    int cls = ((insn & 0x3B000000u)==0x39000000u)          /* unsigned imm */
-           || ((insn & 0x3B200C00u)==0x38200800u)          /* register offset */
-           || ((insn & 0x3B200C00u)==0x38000400u)          /* post-index */
-           || ((insn & 0x3B200C00u)==0x38000C00u);         /* pre-index */
-    if (!cls) return 0;
     unsigned rn = (insn>>5)&31;
-    if (uc->uc_mcontext.regs[rn] >= 0x100000u) return 0;   /* only NULL/low unmapped base */
-    /* crafted chain for the 0xf0 param-pool load */
+    if (uc->uc_mcontext.regs[rn] >= 0x100000u) return 0;   /* base must be low/NULL */
     if ((insn & 0xFFC00000u)==0xF9400000u && (((insn>>10)&0xFFF)*8)==0xf0) {
-        uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; }
-    }
+        uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; } }
     uintptr_t S=nullparam_scratch(); if (!S) return 0;
-    if (getenv("BB_NULL_TRACE")) { static int n; if ((n++ & 15)==0) {
-        GuestRegs gr; int ing = guest_cpu_signal_regs(context, &gr);
-        unsigned long grip = (ing==GUEST_CPU_IN_GUEST)? (unsigned long)(gr.rip-(uintptr_t)image) : 0;
-        unsigned long gret = 0; if (ing==GUEST_CPU_IN_GUEST && gr.gpr[4]) gret = *(unsigned long*)gr.gpr[4] - (unsigned long)(uintptr_t)image;
-        fprintf(stderr,"NULLCTX guest=%lx ret=%lx addr=%lx\n",grip,gret,(unsigned long)info->si_addr); } }
     uc->uc_mcontext.regs[rn]=S;
     return 1;
 }
 static int null_strlen_guard(int sig, siginfo_t* info, void* context) {
     if (sig!=SIGSEGV || (uintptr_t)info->si_addr > 0x1000) return 0;
     ucontext_t* uc=(ucontext_t*)context; uintptr_t pc=uc->uc_mcontext.pc;
-    uint32_t insn=*(uint32_t*)pc;
-    /* LDRB Wt,[Xn,#imm] (0x39400000) with base==0 -> strlen/strcpy on NULL: point to "" */
-    int cls=((insn&0x3B000000u)==0x39000000u)||((insn&0x3B200C00u)==0x38200800u)||((insn&0x3B200C00u)==0x38000400u)||((insn&0x3B200C00u)==0x38000C00u)||((insn&0xFFC00000u)==0xA9400000u)||((insn&0xFFC00000u)==0x29400000u);
-    if (cls) { unsigned rn=(insn>>5)&31;
-        if (uc->uc_mcontext.regs[rn]==0) { static const char empty[64]=""; uc->uc_mcontext.regs[rn]=(uintptr_t)empty; return 1; } }
+    uint32_t insn=*(uint32_t*)pc; unsigned rn=(insn>>5)&31;
+    if (uc->uc_mcontext.regs[rn]==0) { static const char empty[64]=""; uc->uc_mcontext.regs[rn]=(uintptr_t)empty; return 1; }
     return 0;
 }
 static void fault(int sig, siginfo_t *info, void *context) {
