@@ -459,8 +459,11 @@ static int nullparam_skip(int sig, siginfo_t* info, void* context) {
         uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; }
     }
     uintptr_t S=nullparam_scratch(); if (!S) return 0;
-    if (getenv("BB_NULL_TRACE")) { static int n; if ((n++ & 31)==0)
-        fprintf(stderr,"NULLCTX pc=%lx addr=%lx lr=%lx\n",(unsigned long)pc,(unsigned long)info->si_addr,(unsigned long)uc->uc_mcontext.regs[30]); }
+    if (getenv("BB_NULL_TRACE")) { static int n; if ((n++ & 15)==0) {
+        GuestRegs gr; int ing = guest_cpu_signal_regs(context, &gr);
+        unsigned long grip = (ing==GUEST_CPU_IN_GUEST)? (unsigned long)(gr.rip-(uintptr_t)image) : 0;
+        unsigned long gret = 0; if (ing==GUEST_CPU_IN_GUEST && gr.gpr[4]) gret = *(unsigned long*)gr.gpr[4] - (unsigned long)(uintptr_t)image;
+        fprintf(stderr,"NULLCTX guest=%lx ret=%lx addr=%lx\n",grip,gret,(unsigned long)info->si_addr); } }
     uc->uc_mcontext.regs[rn]=S;
     return 1;
 }
