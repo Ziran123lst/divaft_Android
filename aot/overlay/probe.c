@@ -467,7 +467,18 @@ static int nullparam_skip(int sig, siginfo_t* info, void* context) {
     uc->uc_mcontext.regs[rn]=S;
     return 1;
 }
+static int null_strlen_guard(int sig, siginfo_t* info, void* context) {
+    if (sig!=SIGSEGV || (uintptr_t)info->si_addr > 0x1000) return 0;
+    ucontext_t* uc=(ucontext_t*)context; uintptr_t pc=uc->uc_mcontext.pc;
+    uint32_t insn=*(uint32_t*)pc;
+    /* LDRB Wt,[Xn,#imm] (0x39400000) with base==0 -> strlen/strcpy on NULL: point to "" */
+    int cls=((insn&0x3B000000u)==0x39000000u)||((insn&0x3B200C00u)==0x38200800u)||((insn&0x3B200C00u)==0x38000400u)||((insn&0x3B200C00u)==0x38000C00u)||((insn&0xFFC00000u)==0xA9400000u)||((insn&0xFFC00000u)==0x29400000u);
+    if (cls) { unsigned rn=(insn>>5)&31;
+        if (uc->uc_mcontext.regs[rn]==0) { static const char empty[64]=""; uc->uc_mcontext.regs[rn]=(uintptr_t)empty; return 1; } }
+    return 0;
+}
 static void fault(int sig, siginfo_t *info, void *context) {
+    if (null_strlen_guard(sig, info, context)) return;
     if (nullparam_skip(sig, info, context)) return;
     /* The guest CPU's own faults (unaligned atomics), then GPU page tracking (write-protected guest pages). */
     fault_stage = FAULT_STAGE_GUEST_CPU;
