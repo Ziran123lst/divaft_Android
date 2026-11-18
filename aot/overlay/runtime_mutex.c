@@ -213,6 +213,7 @@ static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
         if (e2==0) break;
         if (e2!=EINTR) break;
     }
+    if (runtime_wait_profiling()) runtime_wait_note(0, 0);
     sync_log('w',c,*mutex);
     if (profile) runtime_wait_note(0, runtime_wait_clock() - start);
     return orbis_error(e2);

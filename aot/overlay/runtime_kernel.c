@@ -393,6 +393,18 @@ void runtime_wait_note(int kind, uint64_t ns) {
         }
     }
 }
+
+void runtime_wait_dump(void) {
+    static const char *kinds[]={"cond","mutex","sema","sleep"};
+    FILE* f=fopen(getenv("BB_WAIT_LOG")?getenv("BB_WAIT_LOG"):"/tmp/waitdump.log","a");
+    if(!f) return;
+    for (int i=0;i<512;++i){ WaitSite* w=&wait_sites[i];
+        uint64_t c=atomic_load(&w->count); if(!c||!w->tid) continue;
+        fprintf(f,"%s tid=%d %s +%#lx<+%#lx<+%#lx count=%llu\n", w->name,w->tid,kinds[w->kind&3],
+            (unsigned long)w->site,(unsigned long)w->site2,(unsigned long)w->site3,(unsigned long long)c);
+    }
+    fprintf(f,"--\n"); fclose(f);
+}
 void runtime_wait_report(double frames) {
     sample_start();
     sample_report();
