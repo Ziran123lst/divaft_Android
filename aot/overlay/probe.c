@@ -459,6 +459,8 @@ static int nullparam_skip(int sig, siginfo_t* info, void* context) {
         uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; }
     }
     uintptr_t S=nullparam_scratch(); if (!S) return 0;
+    if (getenv("BB_NULL_TRACE")) { static int n; if ((n++ & 31)==0)
+        fprintf(stderr,"NULLCTX pc=%lx addr=%lx lr=%lx\n",(unsigned long)pc,(unsigned long)info->si_addr,(unsigned long)uc->uc_mcontext.regs[30]); }
     uc->uc_mcontext.regs[rn]=S;
     return 1;
 }
