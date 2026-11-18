@@ -37,6 +37,11 @@ static ABI int32_t attr_type(GuestAttr **attr, int type) {
     if (!attr || !*attr || type < 1 || type > 4) return orbis_error(EINVAL);
     (*attr)->type = type; return 0;
 }
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+static FILE* sync_fp(void){ static FILE* f; static int done; if(!done){done=1; const char* p=getenv("BB_SYNC_TRACE"); if(p) f=fopen(p,"w"); } return f; }
+static void sync_log(char k, void* a, void* b){ FILE* f=sync_fp(); if(!f) return; fprintf(f,"%c tid=%ld a=%p b=%p\n",k,(long)syscall(SYS_gettid),a,b); fflush(f); }
 /* Priority protocols need a PS4 scheduler; the value is validated and recorded only. */
 static ABI int32_t attr_protocol(GuestAttr **attr, int protocol) {
     if (!attr || !*attr || protocol < 0 || protocol > 2) return orbis_error(EINVAL);
@@ -196,7 +201,9 @@ static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     const int profile = runtime_wait_profiling();
     const uint64_t start = profile ? runtime_wait_clock() : 0;
     if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_WAIT ra=%p c=%p m=%p\n",__builtin_return_address(0),(void*)c,(void*)(*mutex));
+    sync_log('W',c,*mutex);
     const int e2 = pthread_cond_wait(&c->native, &(*mutex)->native);
+    sync_log('w',c,*mutex);
     if (profile) runtime_wait_note(0, runtime_wait_clock() - start);
     return orbis_error(e2);
 }
@@ -221,13 +228,13 @@ static ABI int32_t cond_signal(GuestCond **cond) {
     GuestCond *c;
     int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; ++cond_progress; if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_SIG ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_signal(&c->native));
+    ++wakeups; ++cond_progress; if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_SIG ra=%p c=%p\n",__builtin_return_address(0),(void*)c); sync_log('S',c,0); return orbis_error(pthread_cond_signal(&c->native));
 }
 static ABI int32_t cond_broadcast(GuestCond **cond) {
     GuestCond *c;
     int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; ++cond_progress; if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_BCAST ra=%p c=%p\n",__builtin_return_address(0),(void*)c); return orbis_error(pthread_cond_broadcast(&c->native));
+    ++wakeups; ++cond_progress; if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_BCAST ra=%p c=%p\n",__builtin_return_address(0),(void*)c); sync_log('B',c,0); return orbis_error(pthread_cond_broadcast(&c->native));
 }
 /* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;
