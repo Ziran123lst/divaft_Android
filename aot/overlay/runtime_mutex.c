@@ -202,7 +202,17 @@ static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     const uint64_t start = profile ? runtime_wait_clock() : 0;
     if(getenv("BB_COND_TRACE")) fprintf(stderr,"COND_WAIT ra=%p c=%p m=%p\n",__builtin_return_address(0),(void*)c,(void*)(*mutex));
     sync_log('W',c,*mutex);
-    const int e2 = pthread_cond_wait(&c->native, &(*mutex)->native);
+    /* Poll-style wait: wake every 50ms so guest re-checks shared predicates even if a
+     * signal was lost (game uses shared flags + sparse signals). Breaks lost-wakeup deadlock. */
+    int e2 = 0;
+    for (;;) {
+        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += 50*1000000; if (ts.tv_nsec>=1000000000){ts.tv_sec+=1;ts.tv_nsec-=1000000000;}
+        e2 = pthread_cond_timedwait(&c->native, &(*mutex)->native, &ts);
+        if (e2==ETIMEDOUT) { e2=0; break; }   /* spurious: guest re-checks predicate */
+        if (e2==0) break;
+        if (e2!=EINTR) break;
+    }
     sync_log('w',c,*mutex);
     if (profile) runtime_wait_note(0, runtime_wait_clock() - start);
     return orbis_error(e2);
