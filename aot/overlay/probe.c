@@ -67,6 +67,8 @@ static uint64_t module_count;
 static int entered_game;
 static int gpu_enabled;
 int vulkan_smoke(void);
+void runtime_wait_report(double frames);
+static void* wait_dump_thread(void* a){ (void)a; for(;;){ sleep(5); runtime_wait_report(1.0); } return NULL; }
 
 static void fail(const char *message) { fprintf(stderr, "ERROR: %s\n", message); exit(1); }
 
@@ -780,6 +782,9 @@ void runtime_restart(void) {
 
 int main(int argc, char **argv) {
     setenv("BB_COND_BREAKER","1",1);
+    unsetenv("BB_COND_TRACE");
+
+
     unsetenv("BB_COND_TRACE");
 
     unsetenv("BB_COND_TRACE"); /* gate is getenv-presence; unset to disable flood */
