@@ -779,6 +779,9 @@ void runtime_restart(void) {
 }
 
 int main(int argc, char **argv) {
+    setenv("BB_COND_BREAKER","1",1);
+    unsetenv("BB_COND_TRACE");
+
     unsetenv("BB_COND_TRACE"); /* gate is getenv-presence; unset to disable flood */
 
 
