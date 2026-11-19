@@ -451,7 +451,10 @@ static int nullparam_skip(int sig, siginfo_t* info, void* context) {
     uint32_t insn = *(uint32_t*)pc;
     unsigned rn = (insn>>5)&31;
     uintptr_t base = uc->uc_mcontext.regs[rn];
-    (void)base; /* bypass any faulting guest load/store incl mid-range unmapped heap ctx */
+    /* Stores: bypass any unmapped target (param writes). Loads: only NULL/garbage, keep real
+     * pointers so free/realloc don't corrupt the heap (heap-error abort). */
+    int is_store = ((insn & 0x3B000000u)==0x39000000u) && ((insn & 0x00400000u)==0);
+    if (!is_store) { int bad=(base<0x100000u)||(base>0x100000000000ull); if(!bad) return 0; }
     if ((insn & 0xFFC00000u)==0xF9400000u && (((insn>>10)&0xFFF)*8)==0xf0) {
         uintptr_t B=nullparam_fake(); if (B){ uc->uc_mcontext.regs[rn]=B; return 1; } }
     uintptr_t S=nullparam_scratch(); if (!S) return 0;
