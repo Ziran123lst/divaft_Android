@@ -451,7 +451,6 @@ static int nullparam_skip(int sig, siginfo_t* info, void* context) {
     uint32_t insn = *(uint32_t*)pc;
     unsigned rn = (insn>>5)&31;
     uintptr_t base = uc->uc_mcontext.regs[rn];
-    /* invalid context base: NULL/low, or garbage above the guest address space (code-bytes value) */
     int bad = (base < 0x100000u) || (base > 0x100000000000ull);
     if (!bad) return 0;
     if ((insn & 0xFFC00000u)==0xF9400000u && (((insn>>10)&0xFFF)*8)==0xf0) {
