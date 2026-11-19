@@ -446,6 +446,9 @@ static uintptr_t nullparam_scratch(void) {
 }
 static int nullparam_skip(int sig, siginfo_t* info, void* context) {
     if (sig != SIGSEGV) return 0;
+    /* Only truly-unmapped (MAPERR). Write-protected valid guest pages (ACCERR) must go to the
+     * UMA/page-tracking handler, else heap metadata writes are lost -> heap error abort. */
+    if (info->si_code != SEGV_MAPERR) return 0;
     ucontext_t* uc = (ucontext_t*)context;
     uintptr_t pc = uc->uc_mcontext.pc;
     uint32_t insn = *(uint32_t*)pc;
